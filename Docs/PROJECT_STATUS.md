@@ -39,21 +39,29 @@ The immediate goal is to establish a clean modular firmware structure and verify
 - [x] Initial source pushed to `main`
 - [x] Documentation convention selected: project documents under `Docs/`
 - [x] Code convention selected: headers under `include/`, implementations under `src/`
+- [x] Project documentation and architecture foundation added
+- [x] Central hardware pin configuration added
+- [x] Firmware identity module added
+- [x] Safe hardware output module added
+- [x] Debounced water-level input module added
+- [x] Starter sketch replaced with modular hardware-validation runtime
 
 ## In progress
 
-- [ ] Establish project documentation and architecture
-- [ ] Create safe hardware pin configuration
-- [ ] Create minimal modular hardware validation firmware
+- [ ] Build the new branch locally
+- [ ] Upload to the target ESP32-WROOM-32 board
+- [ ] Validate safe boot and GPIO behavior
 
 ## Next steps
 
-1. Build and upload a minimal serial/board test.
-2. Confirm all high-power outputs boot OFF.
-3. Validate the float-switch input on GPIO32.
-4. Validate the setup/reset button input on GPIO33.
-5. Validate a short WS2812B test strip on GPIO27 using proper external 5 V power and common ground.
-6. Add Wi-Fi onboarding only after the hardware foundation is stable.
+1. Pull `feature/project-foundation` on the Mac.
+2. Run `pio run` and resolve any board/toolchain-specific compile issue.
+3. Upload the firmware and open the serial monitor.
+4. Confirm pump, COB, and WS2812B all boot OFF.
+5. Validate the float-switch input on GPIO32.
+6. Validate the setup/reset button input on GPIO33.
+7. Validate a short WS2812B test strip on GPIO27 using proper external 5 V power and common ground.
+8. Add Wi-Fi onboarding only after the hardware foundation is stable.
 
 ## Development rule
 

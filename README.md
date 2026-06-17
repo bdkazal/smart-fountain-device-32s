@@ -6,30 +6,38 @@ This repository follows the Biztola IoT Platform architecture: shared device con
 
 ## Current milestone
 
-**Project foundation and hardware validation**
+**Wi-Fi onboarding and local-first runtime**
 
-The project is intentionally starting with board, GPIO, output-safety, float-switch, reset-button, and WS2812B validation before Wi-Fi onboarding, Laravel HTTP, offline scheduling, or MQTT.
+The hardware foundation, local pump/COB buttons, water safety, and WS2812B output have been validated. The current branch adds stored Wi-Fi credentials, a boot-time reset button, a captive setup hotspot, asynchronous Wi-Fi scanning, non-blocking credential testing, and non-blocking station reconnect.
 
-## Hardware direction
-
-- ESP32-WROOM-32 development board
-- pump control through suitable external driver hardware
-- COB-light control through suitable external driver hardware
-- WS2812B / NeoPixel decorative lighting
-- float-switch water safety
-- physical Wi-Fi setup/reset button
-
-## Initial pin map
+## Hardware pin map
 
 | Function | GPIO |
 | --- | ---: |
-| Pump control | 25 |
-| COB control | 26 |
+| Pump local button | 18 |
+| COB local button | 19 |
+| Pump control/output | 25 |
+| COB control/output | 26 |
 | WS2812B data | 27 |
 | Water-level float switch | 32 |
 | Wi-Fi setup/reset button | 33 |
 
-The assignments remain provisional until hardware validation is complete.
+## Wi-Fi behavior
+
+```text
+No stored Wi-Fi:
+  start Fountain-Setup portal
+
+Stored Wi-Fi:
+  connect and reconnect without blocking local controls
+
+GPIO33 held during boot for 3 seconds:
+  clear only Wi-Fi credentials
+  keep provisioning required until valid Wi-Fi is saved
+  start setup portal
+```
+
+Local pump safety and physical controls continue running in setup, connecting, connected, and disconnected states.
 
 ## Documentation
 
@@ -38,16 +46,21 @@ The assignments remain provisional until hardware validation is complete.
 | [`Docs/PROJECT_STATUS.md`](Docs/PROJECT_STATUS.md) | Current milestone, completed work, and next steps |
 | [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md) | Module boundaries, runtime rules, and development order |
 | [`Docs/HARDWARE_PIN_MAP.md`](Docs/HARDWARE_PIN_MAP.md) | Board target, GPIO assignments, and hardware rules |
+| [`Docs/WIFI_SETUP_AND_RESET.md`](Docs/WIFI_SETUP_AND_RESET.md) | Wi-Fi storage, reset, captive portal, and test flow |
 | [`Docs/TESTING_CHECKLIST.md`](Docs/TESTING_CHECKLIST.md) | Stage-by-stage validation checklist |
 
-## Project structure
+## Main source modules
 
 ```text
-Docs/      documentation and instructions
-include/   module headers
-src/       module implementations and main.cpp
-lib/       optional project-local libraries
-test/      PlatformIO tests
+include/DeviceStorage.h       src/DeviceStorage.cpp
+include/WifiManager.h         src/WifiManager.cpp
+include/WifiReset.h           src/WifiReset.cpp
+include/SetupPortal.h         src/SetupPortal.cpp
+include/SetupPortalPage.h
+include/LocalControls.h       src/LocalControls.cpp
+include/FountainController.h  src/FountainController.cpp
+include/HardwareOutputs.h     src/HardwareOutputs.cpp
+include/WaterLevelSensor.h    src/WaterLevelSensor.cpp
 ```
 
 ## Build
@@ -75,5 +88,6 @@ pio device monitor
 - Put module implementations in `src/*.cpp`.
 - Keep pump water-safety enforcement inside firmware.
 - Initialize all outputs OFF.
-- Keep NeoPixel effects non-blocking.
+- Keep network work and NeoPixel effects non-blocking.
+- Wi-Fi reset must clear Wi-Fi only, never future Laravel cached config.
 - Never commit Wi-Fi, Laravel device, API, or MQTT secrets.

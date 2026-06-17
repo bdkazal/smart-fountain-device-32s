@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Smart Fountain uses a local setup hotspot to collect router Wi-Fi credentials. Local buttons, output control, and water safety remain active during setup, connection attempts, disconnection, and reconnect.
+The Smart Fountain uses a local setup hotspot to collect router credentials. Local buttons, outputs, water protection, and actual-state persistence remain active during setup, connection attempts, disconnection, and reconnect.
 
 ## Setup hotspot
 
@@ -11,61 +11,51 @@ SSID: Fountain-Setup
 URL:  http://192.168.4.1
 ```
 
-The hotspot uses a password configured in `include/WifiConfig.h`.
+The hotspot password is configured in `include/WifiConfig.h`.
 
 ## First boot
 
-If no stored Wi-Fi credentials exist:
+Without stored Wi-Fi credentials:
 
 ```text
 safe hardware startup
-initialize local controls and water safety
+initialize water input and local controls
+restore valid actual output state if available
 mark provisioning required
-start Fountain-Setup hotspot
-start captive DNS redirect
+start Fountain-Setup and captive DNS
 serve setup page
 ```
 
-The firmware does not silently use development-router credentials.
+The firmware never silently uses development-router credentials.
 
 ## Setup page behavior
 
-The page loads before scanning begins.
-
 ```text
 GET /
-  return the page immediately
+  return page immediately
 
 GET /networks
-  start or read an asynchronous Wi-Fi scan
+  start/read asynchronous scan
 
 POST /save
-  start a non-blocking credential test
+  start non-blocking credential test
   return immediately
 
 GET /setup-status
   report idle, connecting, failed, or success
 ```
 
-The browser polls while the device tests the submitted credentials. The ESP32 loop continues updating local controls and pump safety.
+The browser polls while the ESP32 continues its local runtime. The page supports scanned networks, manual SSID entry, password show/hide, wrong-password retry, and save/restart after success.
 
-The setup page supports:
+## Preferences storage
 
-- scanned nearby networks
-- manual SSID / hidden network entry
-- password show/hide
-- wrong-password retry without leaving the page
-- successful save followed by restart
-
-## Credential storage
-
-Preferences namespace:
+Namespace:
 
 ```text
 fountain
 ```
 
-Keys:
+Wi-Fi keys:
 
 ```text
 wifi_ssid
@@ -73,23 +63,29 @@ wifi_pass
 provision
 ```
 
-Saving credentials verifies the stored SSID/password after writing. The provisioning flag is cleared only after the credential test succeeds and the values are saved correctly.
+Actual-state key introduced later:
 
-## Persistent provisioning rule
+```text
+state_blob
+```
 
-Provisioning mode uses a persistent flag, not a one-boot request.
+The future compact Laravel configuration will use its own key in the same namespace.
+
+Credential writes are verified. `provision` becomes false only after successful testing and storage.
+
+## Persistent provisioning
 
 ```text
 provision=true
-  every boot starts the setup hotspot
+  every boot starts Fountain-Setup
 
-valid credentials successfully saved
+valid credentials saved
   provision=false
 ```
 
-If the device restarts before setup is completed, it returns to the setup hotspot.
+An interrupted setup returns to the portal on the next boot.
 
-## Wi-Fi reset button
+## GPIO33 reset
 
 ```text
 GPIO33 -> momentary button -> GND
@@ -98,29 +94,33 @@ released = HIGH
 pressed  = LOW
 ```
 
-Reset flow:
+Confirmed reset flow:
 
 ```text
-1. Hold GPIO33 during boot.
-2. Keep holding for 3 seconds.
-3. Stored Wi-Fi SSID/password are cleared.
-4. Provisioning is marked required.
-5. The setup hotspot starts during the same boot.
+hold during boot for 3 seconds
+clear wifi_ssid and wifi_pass only
+set provisioning required
+start Fountain-Setup
 ```
 
-Releasing before 3 seconds cancels the reset.
+Releasing before three seconds cancels reset.
 
-Wi-Fi reset does not clear future cached Laravel config, schedules, timezone, output state, or device identity.
-
-## Normal stored-Wi-Fi boot
+Wi-Fi reset preserves:
 
 ```text
-stored credentials exist
-provision=false
-  start non-blocking station connection
+state_blob
+future schedules/timezone/scenes cache
+device identity
 ```
 
-The connection state machine uses:
+## Stored-network behavior
+
+```text
+stored credentials + provision=false
+  use non-blocking station connection
+```
+
+States:
 
 ```text
 connecting
@@ -128,82 +128,51 @@ connected
 waiting_to_retry
 ```
 
-A failed connection does not automatically expose the setup hotspot. The device remains locally operational and retries the stored network periodically. The customer must deliberately hold the Wi-Fi reset button during boot to change networks.
+An ordinary router outage does not deliberately expose the portal. The device remains locally operational and retries stored Wi-Fi. Changing networks requires the deliberate GPIO33 action.
 
 ## Local-first rule
 
-The following must remain responsive in every network state:
+These continue in every network state:
 
 - GPIO18 pump button
 - GPIO19 COB button
-- GPIO32 water-level input
-- pump low-water safety
+- GPIO32 water input
+- water protection
 - output updates
 - WS2812B runtime
+- queued actual-state persistence
 
-## Validated behavior
+## Accepted validation baseline
 
-The first complete onboarding flow has passed on the ESP32-WROOM-32 hardware using firmware:
+Firmware used for onboarding validation:
 
 ```text
 smart-fountain-32s-wifi-0.1-onboarding
 ```
 
-Confirmed sequence:
+Recorded results:
 
 ```text
-Fountain-Setup portal active
-submitted router SSID: Andromeda
-credentials tested successfully
-credentials saved and verified in Preferences
-device restarted automatically
-stored SSID found on next boot
-non-blocking station connection started
-Wi-Fi connected
-IP address: 192.168.0.102
-RSSI: approximately -35 to -36 dBm
+SSID: Andromeda
+wrong password: connection failed, portal stayed active
+correct retry: credentials saved and verified
+automatic restart: passed
+stored-network boot: passed
+connected IP: 192.168.0.102
 ```
 
-Relevant serial evidence:
+Controls were also observed working in setup mode, during asynchronous scanning, and after connection. The credential-connecting interval can be too short for a repeatable manual button press, so that timing-specific press is not treated as a separate requirement.
 
-```text
-Testing submitted Wi-Fi SSID: Andromeda
-Wi-Fi credentials saved and verified.
-Submitted Wi-Fi credentials worked and were saved.
-Temporary station IP: 192.168.0.102
-Restarting with saved Wi-Fi credentials...
+The user confirmed the Wi-Fi reset, outage/retry, reconnection, and reprovisioning baseline complete. Further Wi-Fi work should happen only when a regression appears or product requirements change.
 
-Loading stored Wi-Fi credentials...
-Stored SSID: Andromeda
-Starting non-blocking Wi-Fi connection to SSID: Andromeda
-Wi-Fi connected.
-IP address: 192.168.0.102
-RSSI dBm: -36
-```
+## Regression test order
 
-During setup and restart, pump, COB, and NeoPixels remained safely OFF, and the water state continued to be reported.
-
-## Remaining validation
-
-1. Submit a wrong password and confirm the same page allows retry.
-2. Confirm pump/COB buttons during credential testing.
-3. Confirm low-water pump safety during credential testing.
-4. Turn off the router and confirm local controls remain responsive while reconnect retries occur.
-5. Confirm the setup hotspot does not start automatically during an ordinary router outage.
-6. Restore the router and confirm automatic reconnection.
-7. Release GPIO33 before 3 seconds and confirm reset cancellation.
-8. Hold GPIO33 during boot for 3 seconds and confirm provisioning mode returns.
-9. Save new credentials after reprovisioning.
-
-## Full test order
-
-1. Upload firmware with no stored credentials.
-2. Confirm `Fountain-Setup` appears.
-3. Connect a phone and verify the captive page or open `http://192.168.4.1`.
-4. Confirm the page loads before the network scan completes.
-5. Test manual SSID entry.
-6. Submit a wrong password and confirm the page remains usable.
-7. Submit correct credentials and confirm save/restart.
-8. Confirm the next boot connects using stored Wi-Fi.
-9. Turn off the router and confirm local controls remain responsive while reconnect retries occur.
-10. Hold GPIO33 during boot for 3 seconds and confirm provisioning mode returns.
+1. Boot with no credentials and confirm `Fountain-Setup`.
+2. Open captive/manual setup page.
+3. Submit an invalid password and confirm retry remains possible.
+4. Submit valid credentials and confirm save/restart.
+5. Confirm stored-network boot.
+6. Remove router availability and confirm local runtime plus retry.
+7. Restore router and confirm reconnect.
+8. Test short and confirmed GPIO33 holds.
+9. Confirm Wi-Fi reset preserves `state_blob`.

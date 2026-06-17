@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <FastLED.h>
 
+#include "HardwarePins.h"
+
 class HardwareOutputs
 {
 public:
@@ -18,7 +20,7 @@ public:
     bool areNeoPixelsEnabled() const;
 
 private:
-    CRGB pixels[30];
+    CRGB pixels[HardwarePins::NeoPixelCount];
     bool pumpEnabled = false;
     bool cobEnabled = false;
     bool neoPixelsEnabled = false;

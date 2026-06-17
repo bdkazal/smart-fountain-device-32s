@@ -64,6 +64,21 @@ bool HardwareOutputs::areNeoPixelsEnabled() const
     return neoPixelsEnabled;
 }
 
+uint8_t HardwareOutputs::neoPixelRed() const
+{
+    return neoPixelColor.r;
+}
+
+uint8_t HardwareOutputs::neoPixelGreen() const
+{
+    return neoPixelColor.g;
+}
+
+uint8_t HardwareOutputs::neoPixelBlue() const
+{
+    return neoPixelColor.b;
+}
+
 void HardwareOutputs::applyDigitalOutput(gpio_num_t pin, bool activeHigh, bool enabled)
 {
     const bool high = activeHigh ? enabled : !enabled;

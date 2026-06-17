@@ -2,9 +2,9 @@
 
 ## Purpose
 
-The Smart Fountain is a persistent-state device. After a normal restart or power cycle, it should restore the last actual applied output state while preserving safe startup and local water protection.
+The Smart Fountain is a persistent-state device. After a normal restart or power cycle, it restores the last actual applied output state while preserving safe startup and local water protection.
 
-This is separate from the future compact Laravel configuration cache:
+This remains separate from the future compact Laravel configuration cache:
 
 ```text
 actual-state record
@@ -50,29 +50,29 @@ Pump and COB remain ON/OFF only. The abandoned ESP32-C3 prototype's pump PWM, CO
 The state record is intentionally small. It uses:
 
 - a version byte for future migrations
-- flags for the three enabled states
+- flags for enabled states
 - three NeoPixel color bytes
 - reserved bytes for compatible expansion
 - CRC32 validation
 
-On load, an unexpected size, unsupported version, incomplete read, or checksum failure leaves all outputs at their safe OFF defaults.
+An unexpected size, unsupported version, incomplete read, or checksum failure leaves outputs at safe OFF defaults.
 
 Before writing, firmware compares the new record with the existing record. Unchanged state skips the flash write.
 
 ## Save behavior
 
-Every actual state-change notification queues both:
+Every actual state-change notification queues:
 
 ```text
 local state persistence
 future Laravel actual-state synchronization
 ```
 
-The current firmware waits 300 ms before writing. Rapid changes within that window are coalesced so only the final state is stored.
+The firmware waits 300 ms before writing. Changes within that window are coalesced so only the final state should be stored.
 
 The physical output changes immediately. The delay applies only to flash persistence.
 
-If a storage write fails, the final state remains pending and firmware retries without blocking local controls.
+If a storage write fails, the final state remains pending and firmware retries with backoff without blocking local controls.
 
 ## Boot restore order
 
@@ -144,10 +144,41 @@ A durable `pendingSync` flag is not required for the first implementation. Every
 
 ## Validation status
 
-Implementation is committed on:
+Branch:
 
 ```text
 feature/state-persistence
 ```
 
-The code has not yet been built, uploaded, or power-cycle tested on hardware. Do not mark this milestone validated until the checklist in `Docs/TESTING_CHECKLIST.md` passes.
+Validated on ESP32-WROOM-32:
+
+- PlatformIO build and upload
+- first boot without a stored record remains safely OFF
+- initial actual OFF state saves
+- local pump and COB changes save
+- pump and COB restore after power cycle
+- restored state uses `ControlSource::Restore`
+- unchanged restored state skips another flash write
+- low water rejects stored pump ON
+- COB remains restored during low water
+- safety-adjusted pump OFF is saved
+- a later WATER OK reboot restores pump OFF rather than restarting it
+- Wi-Fi reconnect remains operational during the tested sequence
+
+Build result:
+
+```text
+RAM: 14.3% (46736 / 327680 bytes)
+Flash: 63.8% (835877 / 1310720 bytes)
+Result: SUCCESS
+```
+
+Not yet explicitly validated:
+
+- invalid-size/checksum fault injection
+- rapid-toggle coalescing measurement
+- deliberate NVS write-failure simulation
+- WS2812B save/restore through a production command path
+- GPIO33 reprovisioning while observing `state_blob`
+
+The validated pump/COB persistence and low-water restoration milestone is complete. See `Docs/TESTING_CHECKLIST.md` for remaining regression coverage.

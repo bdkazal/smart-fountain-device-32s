@@ -8,7 +8,19 @@ This repository follows the Biztola IoT Platform architecture: shared device con
 
 **Wi-Fi onboarding and local-first runtime**
 
-The hardware foundation, local pump/COB buttons, water safety, and WS2812B output have been validated. The current branch adds stored Wi-Fi credentials, a boot-time reset button, a captive setup hotspot, asynchronous Wi-Fi scanning, non-blocking credential testing, and non-blocking station reconnect.
+The hardware foundation, local pump/COB buttons, water safety, and WS2812B output have been validated. First-boot hotspot setup, credential save/verification, restart, and stored-Wi-Fi connection have also passed on hardware. Remaining validation covers wrong-password retry, router outage/reconnect, and GPIO33 reset/reprovisioning.
+
+Current firmware:
+
+```text
+smart-fountain-32s-wifi-0.1-onboarding
+```
+
+Current development branch:
+
+```text
+feature/wifi-onboarding
+```
 
 ## Hardware pin map
 
@@ -39,11 +51,23 @@ GPIO33 held during boot for 3 seconds:
 
 Local pump safety and physical controls continue running in setup, connecting, connected, and disconnected states.
 
+Validated Wi-Fi result:
+
+```text
+Submitted SSID: Andromeda
+Credential save and verification: passed
+Automatic restart: passed
+Stored-Wi-Fi boot: passed
+Connected IP during test: 192.168.0.102
+Observed RSSI: approximately -35 to -36 dBm
+```
+
 ## Documentation
 
 | File | Purpose |
 | --- | --- |
 | [`Docs/PROJECT_STATUS.md`](Docs/PROJECT_STATUS.md) | Current milestone, completed work, and next steps |
+| [`Docs/PROJECT_HANDOFF.md`](Docs/PROJECT_HANDOFF.md) | Full context for continuing in a new thread or with another developer |
 | [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md) | Module boundaries, runtime rules, and development order |
 | [`Docs/HARDWARE_PIN_MAP.md`](Docs/HARDWARE_PIN_MAP.md) | Board target, GPIO assignments, and hardware rules |
 | [`Docs/WIFI_SETUP_AND_RESET.md`](Docs/WIFI_SETUP_AND_RESET.md) | Wi-Fi storage, reset, captive portal, and test flow |

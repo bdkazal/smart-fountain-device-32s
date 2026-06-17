@@ -6,14 +6,14 @@ The firmware is local-first: physical controls, water protection, storage, Wi-Fi
 
 ## Current milestone
 
-**Safe actual-state persistence — implementation complete, hardware validation pending**
+**Safe actual-state persistence — hardware validated**
 
 ```text
 Branch:   feature/state-persistence
 Firmware: smart-fountain-32s-state-0.2-persistence
 ```
 
-The Wi-Fi onboarding baseline is complete. This branch adds safe restoration of the last actual pump, COB, and WS2812B state after restart or power loss.
+The Wi-Fi onboarding baseline is complete. Pump and COB state now save locally and restore after restart or power loss. A stored pump-ON state is rejected when the live water input reports low water, and the resulting safe OFF state becomes the next restored state.
 
 ## Hardware pin map
 
@@ -39,7 +39,7 @@ boot
   Wi-Fi setup or stored-network runtime starts
 ```
 
-Pump and COB are ON/OFF only. WS2812B state stores enabled status and RGB color.
+Pump and COB are ON/OFF only. The persistence record also supports WS2812B enabled status and RGB color, although a production NeoPixel command path is still future work.
 
 Actual-state persistence uses the existing `fountain` Preferences namespace with key:
 
@@ -47,7 +47,20 @@ Actual-state persistence uses the existing `fountain` Preferences namespace with
 state_blob
 ```
 
-Wi-Fi reset clears only stored SSID/password and preserves actual state.
+Wi-Fi reset clears only stored SSID/password and preserves actual state by design.
+
+## Validated persistence result
+
+```text
+Build: SUCCESS
+RAM: 14.3%
+Flash: 63.8%
+Pump local save/restore: passed
+COB local save/restore: passed
+Low-water restored-pump rejection: passed
+Safety-adjusted OFF persistence: passed
+Unchanged flash-write skip: passed
+```
 
 ## Wi-Fi behavior
 
@@ -75,7 +88,7 @@ Wrong-password retry, successful save/restart, and stored-network connection hav
 | [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md) | Module and runtime rules |
 | [`Docs/HARDWARE_PIN_MAP.md`](Docs/HARDWARE_PIN_MAP.md) | GPIO and hardware rules |
 | [`Docs/WIFI_SETUP_AND_RESET.md`](Docs/WIFI_SETUP_AND_RESET.md) | Wi-Fi onboarding and reset behavior |
-| [`Docs/STATE_PERSISTENCE.md`](Docs/STATE_PERSISTENCE.md) | Actual-state storage and restore design |
+| [`Docs/STATE_PERSISTENCE.md`](Docs/STATE_PERSISTENCE.md) | Actual-state storage, restore, and validation |
 | [`Docs/TESTING_CHECKLIST.md`](Docs/TESTING_CHECKLIST.md) | Validation checklist |
 
 ## Main modules
@@ -98,8 +111,6 @@ pio run
 pio run --target upload
 pio device monitor
 ```
-
-The persistence branch has not yet been built or hardware-tested. Follow `Docs/TESTING_CHECKLIST.md` before treating it as validated.
 
 ## Development rules
 

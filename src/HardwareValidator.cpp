@@ -2,113 +2,21 @@
 
 #include "HardwareOutputs.h"
 
-namespace
-{
-constexpr uint8_t WhiteTestLevel = 10;
-}
-
 void HardwareValidator::begin(HardwareOutputs &outputs)
 {
-    currentStep = NeoPixelStep::Off;
-    activePulse = OutputPulse::None;
-    lastStepAt = millis();
-    started = true;
+    outputs.setPumpEnabled(false);
+    outputs.setCobEnabled(false);
+    outputs.setNeoPixelsEnabled(false);
 
-    Serial.println("NeoPixel validation sequence enabled.");
-    Serial.println("Sequence: OFF -> RED -> GREEN -> BLUE -> WHITE");
-    Serial.println("Each step lasts 3 seconds at low test intensity.");
     Serial.println();
-    Serial.println("Manual GPIO signal-test commands:");
-    Serial.println("  p = GPIO25 HIGH for 2 seconds");
-    Serial.println("  c = GPIO26 HIGH for 2 seconds");
-    Serial.println("  x = return GPIO25 and GPIO26 LOW");
-    Serial.println("Run this only with external loads disconnected.");
-
-    applyCurrentStep(outputs);
+    Serial.println("Interactive hardware console ready.");
+    printHelp();
+    printOutputState(outputs);
 }
 
 void HardwareValidator::update(HardwareOutputs &outputs)
 {
-    if (!started)
-    {
-        return;
-    }
-
     handleSerialCommands(outputs);
-
-    const unsigned long now = millis();
-
-    if (activePulse != OutputPulse::None &&
-        now - pulseStartedAt >= OutputPulseDurationMs)
-    {
-        stopOutputPulse(outputs);
-    }
-
-    if (now - lastStepAt < StepIntervalMs)
-    {
-        return;
-    }
-
-    lastStepAt = now;
-    advanceStep();
-    applyCurrentStep(outputs);
-}
-
-void HardwareValidator::applyCurrentStep(HardwareOutputs &outputs)
-{
-    switch (currentStep)
-    {
-    case NeoPixelStep::Off:
-        outputs.setNeoPixelsEnabled(false);
-        Serial.println("NeoPixel test: OFF");
-        break;
-
-    case NeoPixelStep::Red:
-        outputs.setNeoPixelColor(TestLevel, 0, 0);
-        outputs.setNeoPixelsEnabled(true);
-        Serial.println("NeoPixel test: RED");
-        break;
-
-    case NeoPixelStep::Green:
-        outputs.setNeoPixelColor(0, TestLevel, 0);
-        outputs.setNeoPixelsEnabled(true);
-        Serial.println("NeoPixel test: GREEN");
-        break;
-
-    case NeoPixelStep::Blue:
-        outputs.setNeoPixelColor(0, 0, TestLevel);
-        outputs.setNeoPixelsEnabled(true);
-        Serial.println("NeoPixel test: BLUE");
-        break;
-
-    case NeoPixelStep::White:
-        outputs.setNeoPixelColor(WhiteTestLevel, WhiteTestLevel, WhiteTestLevel);
-        outputs.setNeoPixelsEnabled(true);
-        Serial.println("NeoPixel test: WHITE (balanced low intensity)");
-        break;
-    }
-}
-
-void HardwareValidator::advanceStep()
-{
-    switch (currentStep)
-    {
-    case NeoPixelStep::Off:
-        currentStep = NeoPixelStep::Red;
-        break;
-    case NeoPixelStep::Red:
-        currentStep = NeoPixelStep::Green;
-        break;
-    case NeoPixelStep::Green:
-        currentStep = NeoPixelStep::Blue;
-        break;
-    case NeoPixelStep::Blue:
-        currentStep = NeoPixelStep::White;
-        break;
-    case NeoPixelStep::White:
-        currentStep = NeoPixelStep::Off;
-        break;
-    }
 }
 
 void HardwareValidator::handleSerialCommands(HardwareOutputs &outputs)
@@ -121,18 +29,68 @@ void HardwareValidator::handleSerialCommands(HardwareOutputs &outputs)
         {
         case 'p':
         case 'P':
-            startOutputPulse(OutputPulse::Pump, outputs);
+            outputs.setPumpEnabled(!outputs.isPumpEnabled());
+            Serial.print("Pump test output GPIO25: ");
+            Serial.println(outputs.isPumpEnabled() ? "ON" : "OFF");
             break;
 
         case 'c':
         case 'C':
-            startOutputPulse(OutputPulse::Cob, outputs);
+            outputs.setCobEnabled(!outputs.isCobEnabled());
+            Serial.print("COB test output GPIO26: ");
+            Serial.println(outputs.isCobEnabled() ? "ON" : "OFF");
+            break;
+
+        case 'a':
+        case 'A':
+            outputs.setPumpEnabled(true);
+            outputs.setCobEnabled(true);
+            Serial.println("Pump and COB test outputs: ON");
             break;
 
         case 'x':
         case 'X':
-            stopOutputPulse(outputs);
-            Serial.println("Manual GPIO test: outputs set LOW.");
+            outputs.setPumpEnabled(false);
+            outputs.setCobEnabled(false);
+            outputs.setNeoPixelsEnabled(false);
+            Serial.println("All test outputs: OFF");
+            break;
+
+        case 'r':
+        case 'R':
+            setNeoPixelColor(outputs, ColorTestLevel, 0, 0, "RED");
+            break;
+
+        case 'g':
+        case 'G':
+            setNeoPixelColor(outputs, 0, ColorTestLevel, 0, "GREEN");
+            break;
+
+        case 'b':
+        case 'B':
+            setNeoPixelColor(outputs, 0, 0, ColorTestLevel, "BLUE");
+            break;
+
+        case 'w':
+        case 'W':
+            setNeoPixelColor(outputs, WhiteTestLevel, WhiteTestLevel, WhiteTestLevel, "WHITE");
+            break;
+
+        case 'n':
+        case 'N':
+            outputs.setNeoPixelsEnabled(false);
+            Serial.println("NeoPixels: OFF");
+            break;
+
+        case 's':
+        case 'S':
+            printOutputState(outputs);
+            break;
+
+        case 'h':
+        case 'H':
+        case '?':
+            printHelp();
             break;
 
         default:
@@ -141,34 +99,43 @@ void HardwareValidator::handleSerialCommands(HardwareOutputs &outputs)
     }
 }
 
-void HardwareValidator::startOutputPulse(OutputPulse pulse, HardwareOutputs &outputs)
+void HardwareValidator::printHelp() const
 {
-    stopOutputPulse(outputs);
-
-    activePulse = pulse;
-    pulseStartedAt = millis();
-
-    if (pulse == OutputPulse::Pump)
-    {
-        outputs.setPumpEnabled(true);
-        Serial.println("Manual GPIO test: GPIO25 HIGH for 2 seconds.");
-    }
-    else if (pulse == OutputPulse::Cob)
-    {
-        outputs.setCobEnabled(true);
-        Serial.println("Manual GPIO test: GPIO26 HIGH for 2 seconds.");
-    }
+    Serial.println("Serial commands:");
+    Serial.println("  p = toggle pump test LED on GPIO25");
+    Serial.println("  c = toggle COB test LED on GPIO26");
+    Serial.println("  a = turn pump and COB test LEDs ON");
+    Serial.println("  x = turn all outputs OFF");
+    Serial.println("  r = NeoPixel red");
+    Serial.println("  g = NeoPixel green");
+    Serial.println("  b = NeoPixel blue");
+    Serial.println("  w = NeoPixel balanced white");
+    Serial.println("  n = NeoPixel OFF");
+    Serial.println("  s = print current output state");
+    Serial.println("  h or ? = print this help");
 }
 
-void HardwareValidator::stopOutputPulse(HardwareOutputs &outputs)
+void HardwareValidator::printOutputState(const HardwareOutputs &outputs) const
 {
-    outputs.setPumpEnabled(false);
-    outputs.setCobEnabled(false);
+    Serial.println("Current output state:");
+    Serial.print(" - pump GPIO25: ");
+    Serial.println(outputs.isPumpEnabled() ? "ON" : "OFF");
+    Serial.print(" - COB GPIO26: ");
+    Serial.println(outputs.isCobEnabled() ? "ON" : "OFF");
+    Serial.print(" - NeoPixels GPIO27: ");
+    Serial.println(outputs.areNeoPixelsEnabled() ? "ON" : "OFF");
+}
 
-    if (activePulse != OutputPulse::None)
-    {
-        Serial.println("Manual GPIO test: outputs returned LOW.");
-    }
+void HardwareValidator::setNeoPixelColor(
+    HardwareOutputs &outputs,
+    uint8_t red,
+    uint8_t green,
+    uint8_t blue,
+    const char *name)
+{
+    outputs.setNeoPixelColor(red, green, blue);
+    outputs.setNeoPixelsEnabled(true);
 
-    activePulse = OutputPulse::None;
+    Serial.print("NeoPixels: ");
+    Serial.println(name);
 }

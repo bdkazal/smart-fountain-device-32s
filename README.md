@@ -1,26 +1,19 @@
 # Biztola Smart Fountain Device — ESP32-WROOM-32
 
-Firmware for the Biztola Smart Fountain using an ESP32-WROOM-32 / generic 38-pin ESP32 development board.
+Firmware for the Biztola Smart Fountain using an ESP32-WROOM-32 / generic 38-pin ESP32 board.
 
-This repository follows the Biztola IoT Platform architecture: shared device concerns are separated from Smart Fountain product behavior, hardware safety remains local, and long-form documentation lives under `Docs/`.
+The firmware is local-first: physical controls, water protection, storage, Wi-Fi, and future Laravel communication are separated into modules.
 
 ## Current milestone
 
-**Wi-Fi onboarding and local-first runtime**
-
-The hardware foundation, local pump/COB buttons, water safety, and WS2812B output have been validated. First-boot hotspot setup, credential save/verification, restart, and stored-Wi-Fi connection have also passed on hardware. Remaining validation covers wrong-password retry, router outage/reconnect, and GPIO33 reset/reprovisioning.
-
-Current firmware:
+**Safe actual-state persistence — implementation complete, hardware validation pending**
 
 ```text
-smart-fountain-32s-wifi-0.1-onboarding
+Branch:   feature/state-persistence
+Firmware: smart-fountain-32s-state-0.2-persistence
 ```
 
-Current development branch:
-
-```text
-feature/wifi-onboarding
-```
+The Wi-Fi onboarding baseline is complete. This branch adds safe restoration of the last actual pump, COB, and WS2812B state after restart or power loss.
 
 ## Hardware pin map
 
@@ -31,87 +24,90 @@ feature/wifi-onboarding
 | Pump control/output | 25 |
 | COB control/output | 26 |
 | WS2812B data | 27 |
-| Water-level float switch | 32 |
+| Water-level switch | 32 |
 | Wi-Fi setup/reset button | 33 |
+
+## Runtime behavior
+
+```text
+boot
+  outputs start OFF
+  live water state initializes
+  stored actual state is validated
+  COB and WS2812B restore
+  pump restore passes through water protection
+  Wi-Fi setup or stored-network runtime starts
+```
+
+Pump and COB are ON/OFF only. WS2812B state stores enabled status and RGB color.
+
+Actual-state persistence uses the existing `fountain` Preferences namespace with key:
+
+```text
+state_blob
+```
+
+Wi-Fi reset clears only stored SSID/password and preserves actual state.
 
 ## Wi-Fi behavior
 
 ```text
 No stored Wi-Fi:
-  start Fountain-Setup portal
+  start Fountain-Setup
 
 Stored Wi-Fi:
-  connect and reconnect without blocking local controls
+  connect and retry without blocking local controls
 
 GPIO33 held during boot for 3 seconds:
-  clear only Wi-Fi credentials
-  keep provisioning required until valid Wi-Fi is saved
-  start setup portal
+  clear Wi-Fi credentials only
+  keep provisioning required
+  start Fountain-Setup
 ```
 
-Local pump safety and physical controls continue running in setup, connecting, connected, and disconnected states.
-
-Validated Wi-Fi result:
-
-```text
-Submitted SSID: Andromeda
-Credential save and verification: passed
-Automatic restart: passed
-Stored-Wi-Fi boot: passed
-Connected IP during test: 192.168.0.102
-Observed RSSI: approximately -35 to -36 dBm
-```
+Wrong-password retry, successful save/restart, and stored-network connection have passed the accepted Wi-Fi baseline.
 
 ## Documentation
 
 | File | Purpose |
 | --- | --- |
-| [`Docs/PROJECT_STATUS.md`](Docs/PROJECT_STATUS.md) | Current milestone, completed work, and next steps |
-| [`Docs/PROJECT_HANDOFF.md`](Docs/PROJECT_HANDOFF.md) | Full context for continuing in a new thread or with another developer |
-| [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md) | Module boundaries, runtime rules, and development order |
-| [`Docs/HARDWARE_PIN_MAP.md`](Docs/HARDWARE_PIN_MAP.md) | Board target, GPIO assignments, and hardware rules |
-| [`Docs/WIFI_SETUP_AND_RESET.md`](Docs/WIFI_SETUP_AND_RESET.md) | Wi-Fi storage, reset, captive portal, and test flow |
-| [`Docs/TESTING_CHECKLIST.md`](Docs/TESTING_CHECKLIST.md) | Stage-by-stage validation checklist |
+| [`Docs/PROJECT_STATUS.md`](Docs/PROJECT_STATUS.md) | Current branch, milestone, and pending work |
+| [`Docs/PROJECT_HANDOFF.md`](Docs/PROJECT_HANDOFF.md) | Continuation context |
+| [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md) | Module and runtime rules |
+| [`Docs/HARDWARE_PIN_MAP.md`](Docs/HARDWARE_PIN_MAP.md) | GPIO and hardware rules |
+| [`Docs/WIFI_SETUP_AND_RESET.md`](Docs/WIFI_SETUP_AND_RESET.md) | Wi-Fi onboarding and reset behavior |
+| [`Docs/STATE_PERSISTENCE.md`](Docs/STATE_PERSISTENCE.md) | Actual-state storage and restore design |
+| [`Docs/TESTING_CHECKLIST.md`](Docs/TESTING_CHECKLIST.md) | Validation checklist |
 
-## Main source modules
+## Main modules
 
 ```text
 include/DeviceStorage.h       src/DeviceStorage.cpp
 include/WifiManager.h         src/WifiManager.cpp
 include/WifiReset.h           src/WifiReset.cpp
 include/SetupPortal.h         src/SetupPortal.cpp
-include/SetupPortalPage.h
 include/LocalControls.h       src/LocalControls.cpp
 include/FountainController.h  src/FountainController.cpp
 include/HardwareOutputs.h     src/HardwareOutputs.cpp
 include/WaterLevelSensor.h    src/WaterLevelSensor.cpp
 ```
 
-## Build
+## Build and upload
 
 ```bash
 pio run
-```
-
-## Upload
-
-```bash
 pio run --target upload
-```
-
-## Serial monitor
-
-```bash
 pio device monitor
 ```
 
+The persistence branch has not yet been built or hardware-tested. Follow `Docs/TESTING_CHECKLIST.md` before treating it as validated.
+
 ## Development rules
 
-- Keep `main.cpp` focused on orchestration.
-- Put module interfaces in `include/*.h`.
-- Put module implementations in `src/*.cpp`.
-- Keep pump water-safety enforcement inside firmware.
-- Initialize all outputs OFF.
-- Keep network work and NeoPixel effects non-blocking.
-- Wi-Fi reset must clear Wi-Fi only, never future Laravel cached config.
-- Never commit Wi-Fi, Laravel device, API, or MQTT secrets.
+- Keep `main.cpp` orchestration-focused.
+- Route every output source through `FountainController`.
+- Keep water protection local.
+- Initialize outputs OFF before restoration.
+- Keep network, storage, and future effects cooperative.
+- Keep actual state separate from compact Laravel configuration.
+- Never commit credentials or device/API secrets.
+- Do not merge to `main` without explicit approval.

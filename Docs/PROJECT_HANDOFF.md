@@ -1,187 +1,104 @@
 # Smart Fountain ESP32 Project Handoff
 
-Use this document when continuing the project in a new ChatGPT thread or with another developer.
+Use this document when continuing in a new thread or with another developer.
 
 ## Repository and branch
 
 ```text
-Firmware repository: bdkazal/smart-fountain-device-32s
-Current branch: feature/wifi-onboarding
-Base branch for this stage: feature/project-foundation
-Laravel repository: bdkazal/biztola-iot-platform
+Firmware: bdkazal/smart-fountain-device-32s
+Current branch: feature/state-persistence
+Branch base: feature/wifi-onboarding
+Laravel: bdkazal/biztola-iot-platform
 ```
 
-Do not continue from `main` unless the user explicitly decides to merge completed work.
+Do not continue from or merge to `main` without explicit approval.
 
-## Product
+## Product and board
 
 ```text
 Brand: Biztola
 Product: Smart Fountain
-Board: ESP32-WROOM-32 / generic 38-pin ESP32 development board
+Board: ESP32-WROOM-32 generic 38-pin
 PlatformIO board: esp32dev
 Framework: Arduino
+Firmware: smart-fountain-32s-state-0.2-persistence
 ```
 
-Current firmware version:
+## Pin map
 
-```text
-smart-fountain-32s-wifi-0.1-onboarding
-```
-
-## Main product behavior
-
-The fountain has:
-
-- pump output
-- COB-light output
-- WS2812B decorative lighting
-- water-level float switch
-- physical pump button
-- physical COB button
-- physical boot-time Wi-Fi reset/setup button
-- future Laravel dashboard commands and schedules
-
-The firmware is local-first. Physical controls and pump safety must continue working when Wi-Fi is missing, the setup portal is active, Laravel is unavailable, or reconnect attempts are running.
-
-## Validated hardware pin map
-
-| Function | GPIO | Behavior |
+| Function | GPIO | Rule |
 | --- | ---: | --- |
-| Pump local button | 18 | `INPUT_PULLUP`, button to GND |
-| COB local button | 19 | `INPUT_PULLUP`, button to GND |
-| Pump control/output | 25 | Active HIGH; temporary LED indicator validated |
-| COB control/output | 26 | Active HIGH; temporary LED indicator validated |
-| WS2812B data | 27 | GRB order validated |
-| Water-level float switch | 32 | `INPUT_PULLUP`; LOW means low water |
-| Wi-Fi reset/setup button | 33 | `INPUT_PULLUP`; hold during boot |
+| Pump button | 18 | `INPUT_PULLUP`, button to GND |
+| COB button | 19 | `INPUT_PULLUP`, button to GND |
+| Pump output | 25 | active HIGH |
+| COB output | 26 | active HIGH |
+| WS2812B | 27 | GRB order |
+| Water switch | 32 | LOW means low water |
+| Wi-Fi reset | 33 | hold during boot |
 
-Temporary output test wiring:
+Final high-current loads require suitable drivers. Do not connect them directly to ESP32 GPIO.
 
-```text
-GPIO25 -> 330 ohm resistor -> pump indicator LED -> GND
-GPIO26 -> 330 ohm resistor -> COB indicator LED  -> GND
-```
-
-The final pump and COB loads will use suitable MOSFET/driver hardware. Never connect high-current loads directly to ESP32 GPIO.
-
-## Confirmed control rules
-
-### Pump
-
-- Physical GPIO18 button toggles pump ON/OFF.
-- Laravel dashboard commands and schedules will also be allowed to change pump state.
-- There is no permanent local-override mode.
-- The latest valid action wins.
-- Low-water safety has absolute priority.
-- When water is low, pump is forced OFF.
-- When water is low, local, Laravel, and schedule pump-ON requests must be rejected.
-
-### COB
-
-- Physical GPIO19 button toggles COB ON/OFF.
-- Laravel dashboard commands and schedules will also be allowed to change COB state.
-- Water level does not restrict COB operation.
-
-### State synchronization
-
-Every actual state change should eventually be sent to Laravel, including changes caused by:
-
-- physical buttons
-- dashboard commands
-- schedules
-- water-safety overrides
-
-Actual applied hardware state is the final truth.
-
-## Current architecture
-
-`main.cpp` is orchestration only.
-
-Important modules:
+## Product rules
 
 ```text
-include/FountainController.h   src/FountainController.cpp
-include/LocalControls.h        src/LocalControls.cpp
-include/HardwareOutputs.h      src/HardwareOutputs.cpp
-include/WaterLevelSensor.h     src/WaterLevelSensor.cpp
-include/DeviceStorage.h        src/DeviceStorage.cpp
-include/WifiManager.h          src/WifiManager.cpp
-include/WifiReset.h            src/WifiReset.cpp
-include/SetupPortal.h          src/SetupPortal.cpp
-include/SetupPortalPage.h
-include/WifiConfig.h
+pump: ON/OFF only
+COB: ON/OFF only
+WS2812B: enabled + RGB color
 ```
 
-Architecture rule:
+Latest valid action wins, but local water protection has absolute priority. COB and decorative lighting remain available during low water.
+
+Every source uses:
 
 ```text
-local button ----\
-Laravel command --- > FountainController -> HardwareOutputs
-schedule --------/
-water safety has final authority
+FountainController -> HardwareOutputs
 ```
 
-Do not create separate output behavior for local and remote control. All control sources must use `FountainController`.
-
-## Hardware validation already passed
-
-- PlatformIO build and upload
-- ESP32 serial monitor at 115200
-- safe output startup OFF
-- GPIO18 pump button debounce/toggle
-- GPIO19 COB button debounce/toggle
-- GPIO25 pump indicator output
-- GPIO26 COB indicator output
-- GPIO32 water-level input and debounce
-- pump forced OFF during low water
-- pump button blocked during low water
-- COB still works during low water
-- GPIO33 HIGH/LOW input validation
-- WS2812B OFF/red/green/blue/white
-- WS2812B GRB color order
-- non-blocking local runtime
-
-## Wi-Fi design baseline
-
-Before implementing Wi-Fi, these repositories were reviewed:
+Current sources:
 
 ```text
-bdkazal/smart-plant-bed-device
-bdkazal/smart-plant-bed-device-c3
+boot
+restore
+local_button
+laravel
+schedule
+safety
 ```
 
-The Smart Fountain keeps the improved C3 user flow but uses a cleaner implementation.
+Actual applied hardware state is final truth.
 
-Retained behavior:
+## Completed baseline
 
-- Preferences/NVS Wi-Fi storage
-- setup hotspot
-- setup page loads before scanning
-- scanned networks plus manual/hidden SSID
-- password show/hide
+Validated before this branch:
+
+- safe output startup
+- local pump and COB controls
+- GPIO32 debounce and water protection
+- WS2812B GRB output
+- local-first runtime
+- setup hotspot and captive page
+- credential storage and verification
 - wrong-password retry
-- save and restart after valid credentials
-- boot-time Wi-Fi reset
-- local controls continue while offline/setup is active
+- successful retry, restart, and stored-network connection
+- stored-network retry direction
+- GPIO33 reset/reprovisioning baseline
 
-Further improvements in the fountain firmware:
+Recorded Wi-Fi test:
 
-- persistent provisioning-required flag instead of a one-boot flag
-- Wi-Fi reset clears only Wi-Fi keys
-- no automatic development-router fallback
-- non-blocking normal station connection
-- asynchronous Wi-Fi scanning
-- non-blocking submitted-credential test
-- browser polling through `/setup-status`
-- captive DNS redirect
-- setup HTML separated from networking implementation
-- storage writes verified after save
-- configurable ESP32-WROOM behavior instead of blindly copying C3 radio settings
+```text
+SSID: Andromeda
+IP: 192.168.0.102
+wrong password: failed without restart
+correct retry: saved, restarted, reconnected
+```
 
-## Current Wi-Fi behavior
+The user confirmed the Wi-Fi baseline complete. Do not return to timing-specific credential-button testing unless a regression appears.
 
-Preferences namespace:
+## Current milestone
+
+**Actual-state persistence implementation is committed but not yet built or tested on hardware.**
+
+Current Preferences namespace:
 
 ```text
 fountain
@@ -193,185 +110,128 @@ Keys:
 wifi_ssid
 wifi_pass
 provision
+state_blob
 ```
 
-First boot without stored credentials:
+`state_blob` is a small versioned record containing:
+
+- pump enabled
+- COB enabled
+- WS2812B enabled
+- red, green, blue
+- CRC32 checksum
+
+The future compact Laravel configuration remains a different logical record for schedules, timezone, scenes, and configuration revision.
+
+## Boot sequence
 
 ```text
-provision=true
-start Fountain-Setup hotspot
-start captive DNS
-serve setup page at 192.168.4.1
+1. Outputs initialize OFF.
+2. GPIO32 initializes from the live switch.
+3. Local controls and FountainController initialize.
+4. DeviceStorage initializes.
+5. state_blob loads and validates.
+6. COB and WS2812B restore through FountainController.
+7. Pump restore is requested last.
+8. Water protection may reject pump restore.
+9. Wi-Fi setup or station runtime starts.
 ```
 
-Successful setup:
+Water state is never loaded from flash.
+
+## Save behavior
+
+A shared state-change notification queues:
 
 ```text
-test submitted credentials
-save and verify credentials
-set provision=false
-restart
-connect using stored Wi-Fi
+local persistence
+future Laravel state sync
 ```
 
-Normal router outage:
+Persistence waits 300 ms to coalesce rapid changes. Unchanged records skip flash writes. Failed writes remain pending for retry.
+
+GPIO33 reset removes only Wi-Fi SSID/password and preserves `state_blob`.
+
+## Important modules
 
 ```text
-do not automatically expose setup hotspot
-remain locally operational
-retry stored Wi-Fi periodically
+include/DeviceStorage.h        src/DeviceStorage.cpp
+include/FountainController.h   src/FountainController.cpp
+include/HardwareOutputs.h      src/HardwareOutputs.cpp
+include/WaterLevelSensor.h     src/WaterLevelSensor.cpp
+include/LocalControls.h        src/LocalControls.cpp
+include/WifiManager.h          src/WifiManager.cpp
+include/WifiReset.h            src/WifiReset.cpp
+include/SetupPortal.h          src/SetupPortal.cpp
+src/main.cpp
 ```
 
-Changing Wi-Fi requires deliberate GPIO33 reset/setup action.
+`main.cpp` orchestrates startup and update order. Do not move HTTP parsing, large storage formats, or effects into it.
 
-## Wi-Fi validation already passed
+## Documentation source of truth
 
-Latest successful hardware test:
-
-```text
-Setup portal accepted SSID: Andromeda
-Wi-Fi credentials saved and verified
-Device restarted automatically
-Stored SSID was found on next boot
-Non-blocking station connection started
-Connected IP: 192.168.0.102
-Observed RSSI: approximately -35 to -36 dBm
-```
-
-Relevant serial evidence:
-
-```text
-Testing submitted Wi-Fi SSID: Andromeda
-Wi-Fi credentials saved and verified.
-Submitted Wi-Fi credentials worked and were saved.
-Temporary station IP: 192.168.0.102
-Restarting with saved Wi-Fi credentials...
-
-Loading stored Wi-Fi credentials...
-Stored SSID: Andromeda
-Starting non-blocking Wi-Fi connection to SSID: Andromeda
-Wi-Fi connected.
-IP address: 192.168.0.102
-RSSI dBm: -36
-```
-
-Pump, COB, NeoPixels, and water state remained safely initialized during restart and connection.
-
-## Remaining Wi-Fi tests
-
-Do these before starting Laravel integration:
-
-1. Wrong router password remains on the setup page and permits retry.
-2. Pump/COB buttons remain responsive during credential testing.
-3. Low-water pump safety remains responsive during credential testing.
-4. Router outage does not automatically start the hotspot.
-5. Stored-network reconnect retries occur while local controls continue.
-6. Device reconnects when the router returns.
-7. Releasing GPIO33 before 3 seconds cancels Wi-Fi reset.
-8. Holding GPIO33 during boot for 3 seconds clears Wi-Fi only.
-9. Persistent provisioning mode starts `Fountain-Setup` after reset.
-10. New credentials can be saved after reprovisioning.
-
-Record results in:
+Read:
 
 ```text
 Docs/PROJECT_STATUS.md
 Docs/TESTING_CHECKLIST.md
+Docs/STATE_PERSISTENCE.md
+Docs/ARCHITECTURE.md
 Docs/WIFI_SETUP_AND_RESET.md
+Docs/HARDWARE_PIN_MAP.md
 ```
 
-## Laravel direction after Wi-Fi validation
+## Required next work
 
-Do not begin by writing firmware API code from memory. First inspect the current Laravel repository and the existing Plant Bed device contracts.
+Validate `feature/state-persistence` one test at a time:
 
-Laravel repository:
+1. Build.
+2. Upload and confirm safe first boot.
+3. Toggle pump and COB, allow the save delay, restart, and confirm restore.
+4. Set a WS2812B state in code or a controlled test path, then confirm color restore.
+5. Store pump enabled, force low water before restart, and confirm pump remains disabled.
+6. Confirm the safe result replaces the unsafe stored request.
+7. Rapidly toggle and confirm only the final state is restored.
+8. Enter Wi-Fi reprovisioning and confirm state remains preserved.
+9. Confirm controls and water protection remain responsive during writes.
 
-```text
-bdkazal/biztola-iot-platform
-```
+Record exact serial evidence and commit SHA in the checklist.
 
-Device authentication uses:
-
-```http
-X-DEVICE-KEY: <device key>
-```
-
-Expected platform concepts:
-
-- device UUID
-- device API key
-- heartbeat
-- config fetch
-- command polling
-- command acknowledgement/completion
-- actual state synchronization
-- cached config for offline behavior
-
-The first HTTP integration should support Smart Fountain persistent-state behavior:
-
-```text
-Laravel command -> FountainController -> safety check -> actual hardware state
-actual hardware state -> Laravel state sync
-```
-
-Local button changes and water-safety overrides must update Laravel once reachable.
-
-MQTT is later. HTTP behavior must be stable first.
-
-Existing platform MQTT topic direction for later work:
-
-```text
-biztola/v1/devices/{uuid}/commands
-biztola/v1/devices/{uuid}/command-events
-biztola/v1/devices/{uuid}/state
-biztola/v1/devices/{uuid}/presence
-```
-
-## Git workflow
-
-Current work belongs on:
-
-```text
-feature/wifi-onboarding
-```
-
-Before editing:
+## Build commands
 
 ```bash
 git fetch origin
-git checkout feature/wifi-onboarding
-git pull origin feature/wifi-onboarding
+git checkout feature/state-persistence
+git pull origin feature/state-persistence
 git status
+pio run
+pio run --target upload
+pio device monitor
 ```
 
-Do not use destructive Git commands. Do not merge to `main` without explicit approval.
+No build result is currently claimed. The assistant execution environment could not resolve GitHub or download PlatformIO dependencies.
 
-After the remaining Wi-Fi tests pass, update documentation and then create a Laravel HTTP integration branch from the validated Wi-Fi branch.
+## Laravel direction
 
-Suggested next branch name:
+Only after persistence validation:
 
-```text
-feature/laravel-http-integration
-```
+1. Inspect the current backend repository and API routes.
+2. Create `feature/laravel-http-integration` from this branch.
+3. Add device identity and `X-DEVICE-KEY`.
+4. Report actual state after boot, reconnect, and changes.
+5. Fetch configuration and poll commands.
+6. Apply every action through `FountainController`.
+7. Keep desired configuration separate from reported actual state.
+8. Add compact schedule/timezone/scene cache after confirming the contract.
 
-## Project conventions
+MQTT remains later.
+
+## Conventions
 
 - Documentation directory is capital `Docs/`.
-- Header files belong in `include/`.
+- Interfaces belong in `include/`.
 - Implementations belong in `src/`.
-- `main.cpp` should orchestrate only.
-- Keep code modular and reusable across future Biztola devices.
-- Network operations must not block local safety/control.
-- Outputs initialize OFF.
-- Never commit Wi-Fi credentials, device API keys, Laravel secrets, or MQTT credentials.
-- Do not repeat existing secrets in chat or documentation.
-- Verify the current repository before changing code.
-- Update docs after every validated milestone.
-
-## First task in the next thread
-
-1. Read this handoff document.
-2. Inspect the current `feature/wifi-onboarding` branch.
-3. Review `Docs/PROJECT_STATUS.md`, `Docs/TESTING_CHECKLIST.md`, and `Docs/WIFI_SETUP_AND_RESET.md`.
-4. Continue the remaining Wi-Fi reset/offline/reconnect tests one at a time.
-5. Do not start Laravel HTTP integration until Wi-Fi onboarding is fully validated and documented.
+- Network operations must not block local control.
+- Outputs start OFF before restore.
+- Never commit credentials, API keys, or device secrets.
+- Do not use destructive Git commands.

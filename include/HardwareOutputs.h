@@ -18,6 +18,9 @@ public:
     bool isPumpEnabled() const;
     bool isCobEnabled() const;
     bool areNeoPixelsEnabled() const;
+    uint8_t neoPixelRed() const;
+    uint8_t neoPixelGreen() const;
+    uint8_t neoPixelBlue() const;
 
 private:
     CRGB pixels[HardwarePins::NeoPixelCount];

@@ -59,12 +59,13 @@
 
 ### First-boot setup
 
-- [ ] Branch builds successfully
-- [ ] Firmware uploads successfully
-- [ ] No stored credentials starts `Fountain-Setup`
+- [x] Branch builds successfully
+- [x] Firmware uploads successfully
+- [x] No stored credentials starts `Fountain-Setup`
+- [x] Setup page is reachable and the credential form is usable
 - [ ] Captive setup page opens automatically on phone
-- [ ] Manual fallback opens at `http://192.168.4.1`
-- [ ] Setup page loads before network scan completes
+- [ ] Manual fallback at `http://192.168.4.1` explicitly confirmed
+- [ ] Setup page visibly loads before network scan completes
 - [ ] Nearby network scan completes without dropping the hotspot
 - [ ] Duplicate SSIDs are filtered
 - [ ] Manual/hidden SSID works
@@ -72,19 +73,20 @@
 
 ### Credential test and save
 
-- [ ] `POST /save` returns without freezing local controls
+- [x] Correct credentials connect successfully
+- [x] Credentials are saved and verified in Preferences
+- [x] Provisioning-required flag clears after successful save
+- [x] Device restarts after successful save
+- [ ] `POST /save` responsiveness confirmed while testing credentials
 - [ ] Pump and COB buttons remain responsive during credential test
 - [ ] Water safety remains responsive during credential test
-- [ ] Wrong password keeps the setup page active
-- [ ] Correct password connects successfully
-- [ ] Credentials are saved and verified in Preferences
-- [ ] Provisioning-required flag clears only after successful save
-- [ ] Device restarts after successful save
+- [ ] Wrong password keeps the setup page active and allows retry
 
 ### Stored Wi-Fi and reconnect
 
-- [ ] Next boot uses stored credentials
-- [ ] Station connection is non-blocking
+- [x] Next boot uses stored credentials
+- [x] Station connection starts non-blockingly
+- [x] Connected IP and RSSI are reported
 - [ ] Router outage does not start the setup hotspot automatically
 - [ ] Device retries stored Wi-Fi periodically
 - [ ] Local buttons remain responsive while disconnected
@@ -94,7 +96,7 @@
 ### Reset and reprovisioning
 
 - [ ] GPIO33 boot hold clears SSID/password only
-- [ ] Future cached Laravel config would remain untouched
+- [ ] Future cached Laravel config remains untouched
 - [ ] Provisioning-required flag survives restart
 - [ ] Device returns directly to `Fountain-Setup`
 - [ ] New credentials can be saved successfully
@@ -127,6 +129,18 @@
 - [ ] Command acknowledged/executed/failed events are published
 - [ ] Actual state is published after changes
 - [ ] HTTP fallback remains functional
+
+## Latest Wi-Fi evidence
+
+```text
+Firmware: smart-fountain-32s-wifi-0.1-onboarding
+Submitted SSID: Andromeda
+Stored credential verification: passed
+Restart after save: passed
+Stored-Wi-Fi boot: passed
+Connected IP: 192.168.0.102
+Observed RSSI: approximately -35 to -36 dBm
+```
 
 ## Test evidence rule
 

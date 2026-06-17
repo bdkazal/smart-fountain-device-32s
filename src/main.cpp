@@ -1,16 +1,19 @@
 #include <Arduino.h>
 
 #include "FirmwareInfo.h"
+#include "FountainController.h"
 #include "HardwareOutputs.h"
 #include "HardwarePins.h"
-#include "HardwareValidator.h"
+#include "LocalControls.h"
 #include "WaterLevelSensor.h"
 
 namespace
 {
+FountainController fountainController;
 HardwareOutputs hardwareOutputs;
-HardwareValidator hardwareValidator;
+LocalControls localControls;
 WaterLevelSensor waterLevelSensor;
+
 unsigned long lastStatusLogAt = 0;
 constexpr unsigned long StatusLogIntervalMs = 2000;
 
@@ -23,11 +26,11 @@ void printBootInfo()
     Serial.println(FirmwareInfo::BoardName);
     Serial.print("Firmware: ");
     Serial.println(FirmwareInfo::Version);
-    Serial.println("Milestone: project foundation and hardware validation");
+    Serial.println("Milestone: local controls and shared fountain controller");
     Serial.println("========================================");
 }
 
-void initializeInputs()
+void initializeWifiResetInput()
 {
     pinMode(HardwarePins::WifiResetButton, INPUT_PULLUP);
 
@@ -35,19 +38,23 @@ void initializeInputs()
     Serial.println(static_cast<int>(HardwarePins::WifiResetButton));
 }
 
-void enforceLocalWaterSafety()
+void processLocalControls()
 {
-    if (waterLevelSensor.isWaterLow() && hardwareOutputs.isPumpEnabled())
+    if (localControls.consumePumpToggleRequest())
     {
-        hardwareOutputs.setPumpEnabled(false);
-        Serial.println("Water safety forced pump OFF.");
+        fountainController.togglePumpFromLocalButton();
+    }
+
+    if (localControls.consumeCobToggleRequest())
+    {
+        fountainController.toggleCobFromLocalButton();
     }
 }
 
 void logHardwareStatus()
 {
     Serial.println();
-    Serial.println("Hardware validation status:");
+    Serial.println("Fountain state:");
 
     Serial.print(" - pump: ");
     Serial.println(hardwareOutputs.isPumpEnabled() ? "ON" : "OFF");
@@ -64,8 +71,22 @@ void logHardwareStatus()
     Serial.print(" - water state: ");
     Serial.println(waterLevelSensor.isWaterLow() ? "LOW WATER" : "WATER OK");
 
+    Serial.print(" - last control source: ");
+    Serial.println(fountainController.lastControlSourceName());
+
     Serial.print(" - reset button raw: ");
     Serial.println(digitalRead(HardwarePins::WifiResetButton));
+}
+
+void reportPendingStateChange()
+{
+    if (!fountainController.consumeStateChanged())
+    {
+        return;
+    }
+
+    Serial.println("State changed; ready for future Laravel state sync.");
+    logHardwareStatus();
 }
 }
 
@@ -77,20 +98,29 @@ void setup()
     printBootInfo();
     hardwareOutputs.begin();
     waterLevelSensor.begin();
-    initializeInputs();
-    hardwareValidator.begin(hardwareOutputs);
+    localControls.begin();
+    initializeWifiResetInput();
+    fountainController.begin(hardwareOutputs, waterLevelSensor);
 
-    Serial.println("Foundation hardware validation firmware ready.");
-    logHardwareStatus();
+    Serial.println("Local fountain controls ready.");
+    Serial.println("Pump button: GPIO18 to GND");
+    Serial.println("COB button: GPIO19 to GND");
+
+    reportPendingStateChange();
     lastStatusLogAt = millis();
 }
 
 void loop()
 {
     waterLevelSensor.update();
-    enforceLocalWaterSafety();
-    hardwareValidator.update(hardwareOutputs);
+    localControls.update();
+
+    fountainController.update();
+    processLocalControls();
+    fountainController.update();
+
     hardwareOutputs.update();
+    reportPendingStateChange();
 
     const unsigned long now = millis();
 

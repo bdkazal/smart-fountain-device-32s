@@ -14,9 +14,9 @@ feature/wifi-onboarding
 
 ## Current milestone
 
-**Wi-Fi onboarding and local-first runtime**
+**Wi-Fi onboarding and local-first runtime — initial provisioning flow validated**
 
-The hardware foundation has passed. The current work adds production-minded Wi-Fi provisioning while keeping physical controls and pump safety responsive in every network state.
+The hardware foundation has passed. First-boot setup, credential storage, restart, and stored-Wi-Fi connection have now been validated on the ESP32-WROOM-32 board.
 
 ## Completed hardware foundation
 
@@ -38,9 +38,9 @@ The hardware foundation has passed. The current work adds production-minded Wi-F
 - [x] Dedicated `feature/wifi-onboarding` branch
 - [x] `DeviceStorage` using Preferences/NVS namespace `fountain`
 - [x] Wi-Fi writes verified after storage
-- [x] Wi-Fi reset clears only Wi-Fi SSID/password
+- [x] Wi-Fi reset is designed to clear only Wi-Fi SSID/password
 - [x] Persistent provisioning-required flag
-- [x] GPIO33 boot-time 3-second hold
+- [x] GPIO33 boot-time 3-second hold implementation
 - [x] No automatic development-router fallback
 - [x] Non-blocking station connection state machine
 - [x] Stored-network reconnect without exposing the portal automatically
@@ -52,38 +52,55 @@ The hardware foundation has passed. The current work adds production-minded Wi-F
 - [x] Password show/hide
 - [x] Non-blocking submitted-credential test
 - [x] Browser status polling
-- [x] Wrong-password retry on the same page
+- [x] Wrong-password retry support
 - [x] Save, verify, clear provisioning flag, and restart after success
 - [x] Setup page separated into `SetupPortalPage.h`
 
-## Current firmware version
+## Validated on hardware
+
+Firmware:
 
 ```text
 smart-fountain-32s-wifi-0.1-onboarding
 ```
 
-## Current validation required
+Confirmed from the latest serial test:
 
-1. Build the branch locally.
-2. Upload with no stored credentials.
-3. Confirm the `Fountain-Setup` hotspot appears.
-4. Confirm the captive page opens, or use `http://192.168.4.1`.
-5. Confirm local pump/COB buttons and low-water safety remain responsive during setup.
-6. Confirm network scan results appear.
-7. Test a wrong password and retry.
-8. Save correct credentials and confirm restart.
-9. Confirm stored-Wi-Fi connection on the next boot.
-10. Disable the router and confirm periodic reconnect while local control remains active.
-11. Hold GPIO33 during boot for 3 seconds and confirm setup mode returns.
+- [x] Firmware builds and uploads
+- [x] First boot without stored Wi-Fi starts setup mode
+- [x] Setup portal accepts router credentials
+- [x] Submitted SSID `Andromeda` connects successfully
+- [x] Wi-Fi credentials are saved and verified
+- [x] Device restarts after successful save
+- [x] Next boot finds the stored SSID
+- [x] Station connection starts without blocking the local runtime
+- [x] Device connects at `192.168.0.102`
+- [x] Connected RSSI observed around `-35` to `-36 dBm`
+- [x] Pump, COB, and NeoPixels remain safely OFF through restart
+- [x] Water state remains available during setup and connected runtime
+
+## Remaining Wi-Fi validation
+
+1. Confirm a wrong password leaves the setup portal active and allows retry.
+2. Confirm pump/COB buttons and low-water safety remain responsive while credential testing is in progress.
+3. Turn off the router and confirm reconnect retries without starting the setup hotspot.
+4. Confirm local buttons and pump safety while the router is unavailable.
+5. Restore the router and confirm automatic reconnection.
+6. Release GPIO33 before 3 seconds during boot and confirm reset cancellation.
+7. Hold GPIO33 during boot for 3 seconds and confirm:
+   - stored Wi-Fi is cleared,
+   - provisioning remains required,
+   - `Fountain-Setup` returns,
+   - new credentials can be saved.
 
 ## Next development stage
 
-After Wi-Fi onboarding passes, create a Laravel HTTP integration branch and add:
+After the remaining Wi-Fi tests pass, create a Laravel HTTP integration branch and add:
 
 - device identity and `X-DEVICE-KEY`
 - Smart Fountain config fetch
 - dashboard command polling
-- command ACK handling
+- command acknowledgement and completion
 - actual state synchronization after local buttons, Laravel commands, schedules, and safety overrides
 - compact cached config for offline behavior
 

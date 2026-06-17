@@ -2,140 +2,181 @@
 
 ## Purpose
 
-This firmware is the ESP32-WROOM-32 implementation of the Biztola Smart Fountain. It should follow the same platform-minded rules as `bdkazal/biztola-iot-platform` while keeping hardware-specific behavior isolated.
+This firmware is the ESP32-WROOM-32 implementation of the Biztola Smart Fountain. Shared platform concerns stay separate from product behavior, and hardware safety remains local.
 
 ## Directory convention
 
 ```text
-Docs/      project documentation and operating instructions
-include/   public module headers (`.h`)
-src/       module implementations (`.cpp`) and `main.cpp`
+Docs/      project documentation
+include/   module interfaces
+src/       implementations and main.cpp
 lib/       optional project-local libraries
- test/      PlatformIO tests
+test/      PlatformIO tests
 ```
 
-Do not place long-form documentation in the repository root. The root `README.md` is only the project entry point and documentation map.
+`README.md` is the project entry point. Long-form documentation belongs in `Docs/`.
 
 ## Module rule
 
-Each substantial module should normally have:
+A substantial module normally uses:
 
 ```text
 include/ModuleName.h
 src/ModuleName.cpp
 ```
 
-Headers define the public interface. Implementation details belong in `.cpp` files.
+`src/main.cpp` remains orchestration-focused. It initializes modules, defines startup order, calls cooperative update methods, and coordinates high-level runtime state. Detailed networking, parsing, storage formats, effects, and debounce logic belong in modules.
 
-## `main.cpp` responsibility
+## Current module groups
 
-`src/main.cpp` should remain small and orchestration-focused. It may:
+### Shared device modules
 
-- initialize modules
-- define the startup order
-- call non-blocking module update methods
-- coordinate high-level online/offline behavior
-
-It should not contain:
-
-- setup-portal HTML
-- detailed HTTP request code
-- large JSON parsers
-- NeoPixel animation implementations
-- GPIO debounce algorithms
-- large command-processing branches
-
-## Planned module groups
-
-### Shared device/platform modules
-
-- `DeviceIdentity`
 - `DeviceStorage`
 - `WifiManager`
 - `WifiReset`
 - `SetupPortal`
+
+Future HTTP modules:
+
+- `DeviceIdentity`
 - `ApiClient`
 - `CommandClient`
 - `DeviceStateReporter`
 - `DeviceClock`
-- `MqttClient`
 
 ### Smart Fountain modules
 
-- `FountainTypes`
-- `FountainConfig`
 - `FountainController`
 - `HardwareOutputs`
 - `WaterLevelSensor`
+- `LocalControls`
+
+Future product modules:
+
+- `FountainConfig`
 - `NeoPixelController`
 - `OfflineTimeline`
 
-Modules should be introduced only when their development stage begins. Do not create empty speculative modules.
+Do not create empty speculative modules.
 
-## Product behavior
+## Shared control path
 
-The Smart Fountain is a persistent-state device. The firmware maintains the actual applied state of:
+```text
+local button ----\
+restore ----------\
+Laravel command ----> FountainController -> HardwareOutputs
+schedule ----------/
+water protection has final authority
+```
 
-- pump
-- COB light
-- decorative WS2812B lighting
+All sources use the same controller. The device reports actual applied hardware state, not merely requested state.
 
-The device must report actual applied state, not merely requested state.
+Current control sources:
 
-## Safety rules
+```text
+boot
+restore
+local_button
+laravel
+schedule
+safety
+```
 
-### Safe boot
+## Output model
 
-On every boot:
+Current hardware behavior is intentionally simple:
 
-- pump output starts OFF
-- COB output starts OFF
-- WS2812B output starts OFF
-- cached or cloud state is applied only after hardware initialization
+```text
+pump: ON/OFF
+COB: ON/OFF
+WS2812B: enabled + RGB color
+```
 
-### Water safety
+The abandoned ESP32-C3 prototype's pump PWM, COB PWM, and analog RGB implementation are not part of this board.
 
-Water-low protection is local and always active.
+## Safe boot
+
+Every boot follows this order:
+
+```text
+1. Configure pump, COB, and WS2812B physically OFF.
+2. Initialize GPIO32 and read the live water state.
+3. Initialize local controls and FountainController.
+4. Initialize DeviceStorage.
+5. Load and validate actual-state storage.
+6. Restore COB and WS2812B through FountainController.
+7. Request pump restore through FountainController.
+8. Start setup-portal or stored-Wi-Fi runtime.
+```
+
+Pump restoration is last. A low-water reading rejects a restored pump request.
+
+## Storage architecture
+
+Use one `DeviceStorage` module and one Preferences namespace:
+
+```text
+fountain
+```
+
+Use separate logical records because they have different meanings and write frequency:
+
+```text
+actual-state record
+  state_blob
+  pump/COB/WS2812B actual applied state
+
+future compact configuration record
+  schedules, timezone, scenes, config revision
+```
+
+Wi-Fi keys remain:
+
+```text
+wifi_ssid
+wifi_pass
+provision
+```
+
+GPIO33 Wi-Fi reset removes only `wifi_ssid` and `wifi_pass`. It preserves actual state and future compact configuration.
+
+The actual-state record is versioned, checksum-protected, compared before writing, and written after a short coalescing delay. Invalid records leave safe defaults active.
+
+See `Docs/STATE_PERSISTENCE.md`.
+
+## Water protection
+
+Water protection is always local.
 
 When low water is confirmed:
 
-- pump turns OFF immediately
-- pump-on requests are rejected or overridden locally
-- COB and decorative lighting may remain available
+- pump is disabled
+- pump-enable requests are rejected
+- COB and decorative lighting remain available
+- the safety-adjusted actual state becomes the state to persist and later report
 
 This rule must not depend on Wi-Fi, Laravel, MQTT, or internet access.
 
 ## Runtime rules
 
-- Keep the main loop cooperative and non-blocking.
-- Avoid long `delay()` calls outside controlled startup or hardware-test steps.
-- NeoPixel effects advance through `update()` calls based on `millis()`.
-- Wi-Fi, HTTP, MQTT, safety inputs, and output updates must remain responsive.
+- Keep the loop cooperative and non-blocking.
+- Avoid long delays outside controlled startup or hardware tests.
+- Local inputs and water protection run in every network mode.
+- Storage writes must not control physical output timing.
+- NeoPixel effects must later advance through `update()` and `millis()`.
+- HTTP and MQTT must not create alternate hardware-control paths.
 
-## Configuration and secrets
+## Secrets
 
-Tracked example:
+Never commit Wi-Fi passwords, Laravel device/API keys, or MQTT credentials. Tracked examples may document required fields; real values stay in ignored local files or future secure provisioning.
 
-```text
-include/DeviceSecrets.example.h
-```
+## Development order
 
-Local ignored file:
+1. hardware foundation
+2. Wi-Fi onboarding
+3. actual-state persistence
+4. Laravel HTTP state/config/command flow
+5. compact configuration and offline timeline
+6. MQTT live flow
 
-```text
-include/DeviceSecrets.h
-```
-
-Never commit Wi-Fi passwords, Laravel API keys, device keys, or MQTT passwords.
-
-## Cloud communication direction
-
-Development order:
-
-1. stable hardware foundation
-2. Wi-Fi setup and stored credentials
-3. Laravel HTTP configuration/state/command flow
-4. offline cache and fallback behavior
-5. MQTT live command, presence, event, and state flow
-
-HTTP remains responsible for configuration and fallback workflows. MQTT will later handle live commands and events.
+HTTP remains responsible for configuration and fallback workflows. MQTT is later.

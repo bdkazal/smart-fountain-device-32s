@@ -23,11 +23,12 @@ WifiManager wifiManager;
 WifiReset wifiReset;
 
 unsigned long lastStatusLogAt = 0;
-unsigned long fountainStateChangedAt = 0;
+unsigned long fountainStateSaveNotBefore = 0;
 bool fountainStateSavePending = false;
 
 constexpr unsigned long StatusLogIntervalMs = 5000;
 constexpr unsigned long FountainStateSaveDelayMs = 300;
+constexpr unsigned long FountainStateSaveRetryMs = 5000;
 
 void printBootInfo()
 {
@@ -107,7 +108,7 @@ void restoreStoredFountainState()
 void scheduleFountainStateSave()
 {
     fountainStateSavePending = true;
-    fountainStateChangedAt = millis();
+    fountainStateSaveNotBefore = millis() + FountainStateSaveDelayMs;
 }
 
 void persistFountainStateIfDue()
@@ -119,7 +120,7 @@ void persistFountainStateIfDue()
 
     const unsigned long now = millis();
 
-    if (now - fountainStateChangedAt < FountainStateSaveDelayMs)
+    if (static_cast<long>(now - fountainStateSaveNotBefore) < 0)
     {
         return;
     }
@@ -130,8 +131,8 @@ void persistFountainStateIfDue()
         return;
     }
 
-    // Keep the final state pending and retry later without blocking local control.
-    fountainStateChangedAt = now;
+    // Keep the final state pending while backing off repeated storage failures.
+    fountainStateSaveNotBefore = now + FountainStateSaveRetryMs;
 }
 
 void reportPendingStateChange()

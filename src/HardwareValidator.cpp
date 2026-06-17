@@ -2,6 +2,11 @@
 
 #include "HardwareOutputs.h"
 
+namespace
+{
+constexpr uint8_t WhiteTestLevel = 10;
+}
+
 void HardwareValidator::begin(HardwareOutputs &outputs)
 {
     currentStep = NeoPixelStep::Off;
@@ -62,9 +67,9 @@ void HardwareValidator::applyCurrentStep(HardwareOutputs &outputs)
         break;
 
     case NeoPixelStep::White:
-        outputs.setNeoPixelColor(TestLevel, TestLevel, TestLevel);
+        outputs.setNeoPixelColor(WhiteTestLevel, WhiteTestLevel, WhiteTestLevel);
         outputs.setNeoPixelsEnabled(true);
-        Serial.println("NeoPixel test: WHITE (low intensity)");
+        Serial.println("NeoPixel test: WHITE (balanced low intensity)");
         break;
     }
 }

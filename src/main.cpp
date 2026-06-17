@@ -3,11 +3,13 @@
 #include "FirmwareInfo.h"
 #include "HardwareOutputs.h"
 #include "HardwarePins.h"
+#include "HardwareValidator.h"
 #include "WaterLevelSensor.h"
 
 namespace
 {
 HardwareOutputs hardwareOutputs;
+HardwareValidator hardwareValidator;
 WaterLevelSensor waterLevelSensor;
 unsigned long lastStatusLogAt = 0;
 constexpr unsigned long StatusLogIntervalMs = 2000;
@@ -76,6 +78,7 @@ void setup()
     hardwareOutputs.begin();
     waterLevelSensor.begin();
     initializeInputs();
+    hardwareValidator.begin(hardwareOutputs);
 
     Serial.println("Foundation hardware validation firmware ready.");
     logHardwareStatus();
@@ -86,6 +89,7 @@ void loop()
 {
     waterLevelSensor.update();
     enforceLocalWaterSafety();
+    hardwareValidator.update(hardwareOutputs);
     hardwareOutputs.update();
 
     const unsigned long now = millis();

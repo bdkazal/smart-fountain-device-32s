@@ -8,6 +8,7 @@ class WaterLevelSensor;
 enum class ControlSource : uint8_t
 {
     Boot,
+    Restore,
     LocalButton,
     Laravel,
     Schedule,
@@ -25,6 +26,12 @@ public:
 
     bool requestPumpState(bool enabled, ControlSource source);
     void requestCobState(bool enabled, ControlSource source);
+    void requestNeoPixelState(
+        bool enabled,
+        uint8_t red,
+        uint8_t green,
+        uint8_t blue,
+        ControlSource source);
 
     bool consumeStateChanged();
     ControlSource lastControlSource() const;

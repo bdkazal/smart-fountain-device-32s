@@ -54,9 +54,9 @@ bool FountainController::requestPumpState(bool enabled, ControlSource requestedS
         if (outputs->isPumpEnabled())
         {
             outputs->setPumpEnabled(false);
-            markStateChanged(ControlSource::Safety);
         }
 
+        markStateChanged(ControlSource::Safety);
         Serial.print("Pump request rejected by low-water safety. source=");
         Serial.println(sourceName(requestedSource));
         return false;

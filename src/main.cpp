@@ -1,21 +1,29 @@
 #include <Arduino.h>
+#include <WiFi.h>
 
+#include "DeviceStorage.h"
 #include "FirmwareInfo.h"
 #include "FountainController.h"
 #include "HardwareOutputs.h"
-#include "HardwarePins.h"
 #include "LocalControls.h"
+#include "SetupPortal.h"
 #include "WaterLevelSensor.h"
+#include "WifiManager.h"
+#include "WifiReset.h"
 
 namespace
 {
+DeviceStorage deviceStorage;
 FountainController fountainController;
 HardwareOutputs hardwareOutputs;
 LocalControls localControls;
+SetupPortal setupPortal;
 WaterLevelSensor waterLevelSensor;
+WifiManager wifiManager;
+WifiReset wifiReset;
 
 unsigned long lastStatusLogAt = 0;
-constexpr unsigned long StatusLogIntervalMs = 2000;
+constexpr unsigned long StatusLogIntervalMs = 5000;
 
 void printBootInfo()
 {
@@ -26,16 +34,8 @@ void printBootInfo()
     Serial.println(FirmwareInfo::BoardName);
     Serial.print("Firmware: ");
     Serial.println(FirmwareInfo::Version);
-    Serial.println("Milestone: local controls and shared fountain controller");
+    Serial.println("Milestone: Wi-Fi onboarding and local-first runtime");
     Serial.println("========================================");
-}
-
-void initializeWifiResetInput()
-{
-    pinMode(HardwarePins::WifiResetButton, INPUT_PULLUP);
-
-    Serial.print("Wi-Fi reset button initialized on GPIO");
-    Serial.println(static_cast<int>(HardwarePins::WifiResetButton));
 }
 
 void processLocalControls()
@@ -51,31 +51,16 @@ void processLocalControls()
     }
 }
 
-void logHardwareStatus()
+void updateLocalRuntime()
 {
-    Serial.println();
-    Serial.println("Fountain state:");
+    waterLevelSensor.update();
+    localControls.update();
 
-    Serial.print(" - pump: ");
-    Serial.println(hardwareOutputs.isPumpEnabled() ? "ON" : "OFF");
+    fountainController.update();
+    processLocalControls();
+    fountainController.update();
 
-    Serial.print(" - COB: ");
-    Serial.println(hardwareOutputs.isCobEnabled() ? "ON" : "OFF");
-
-    Serial.print(" - NeoPixels: ");
-    Serial.println(hardwareOutputs.areNeoPixelsEnabled() ? "ON" : "OFF");
-
-    Serial.print(" - water GPIO raw: ");
-    Serial.println(waterLevelSensor.rawPinState());
-
-    Serial.print(" - water state: ");
-    Serial.println(waterLevelSensor.isWaterLow() ? "LOW WATER" : "WATER OK");
-
-    Serial.print(" - last control source: ");
-    Serial.println(fountainController.lastControlSourceName());
-
-    Serial.print(" - reset button raw: ");
-    Serial.println(digitalRead(HardwarePins::WifiResetButton));
+    hardwareOutputs.update();
 }
 
 void reportPendingStateChange()
@@ -86,7 +71,79 @@ void reportPendingStateChange()
     }
 
     Serial.println("State changed; ready for future Laravel state sync.");
-    logHardwareStatus();
+}
+
+void startNetworkRuntime()
+{
+    const bool resetRequested = wifiReset.checkOnBoot(deviceStorage);
+    const StoredWifiCredentials credentials = deviceStorage.loadWifiCredentials();
+
+    bool provisioningRequired = resetRequested || deviceStorage.isProvisioningRequired();
+
+    if (!credentials.valid)
+    {
+        provisioningRequired = true;
+        deviceStorage.setProvisioningRequired(true);
+    }
+
+    if (provisioningRequired)
+    {
+        Serial.println("Provisioning required. Starting setup hotspot directly.");
+        setupPortal.begin(deviceStorage);
+        return;
+    }
+
+    wifiManager.begin(credentials);
+}
+
+void updateNetworkRuntime()
+{
+    if (setupPortal.isActive())
+    {
+        setupPortal.update();
+        return;
+    }
+
+    wifiManager.update();
+}
+
+void logRuntimeStatus()
+{
+    Serial.println();
+    Serial.println("Fountain runtime status:");
+
+    Serial.print(" - pump: ");
+    Serial.println(hardwareOutputs.isPumpEnabled() ? "ON" : "OFF");
+
+    Serial.print(" - COB: ");
+    Serial.println(hardwareOutputs.isCobEnabled() ? "ON" : "OFF");
+
+    Serial.print(" - NeoPixels: ");
+    Serial.println(hardwareOutputs.areNeoPixelsEnabled() ? "ON" : "OFF");
+
+    Serial.print(" - water state: ");
+    Serial.println(waterLevelSensor.isWaterLow() ? "LOW WATER" : "WATER OK");
+
+    Serial.print(" - last control source: ");
+    Serial.println(fountainController.lastControlSourceName());
+
+    if (setupPortal.isActive())
+    {
+        Serial.print(" - network mode: setup_portal, credential_state=");
+        Serial.println(setupPortal.credentialStateName());
+        return;
+    }
+
+    Serial.print(" - Wi-Fi state: ");
+    Serial.println(wifiManager.stateName());
+
+    if (wifiManager.isConnected())
+    {
+        Serial.print(" - IP: ");
+        Serial.println(WiFi.localIP());
+        Serial.print(" - RSSI dBm: ");
+        Serial.println(WiFi.RSSI());
+    }
 }
 }
 
@@ -96,30 +153,26 @@ void setup()
     delay(1000);
 
     printBootInfo();
+
     hardwareOutputs.begin();
     waterLevelSensor.begin();
     localControls.begin();
-    initializeWifiResetInput();
     fountainController.begin(hardwareOutputs, waterLevelSensor);
 
-    Serial.println("Local fountain controls ready.");
-    Serial.println("Pump button: GPIO18 to GND");
-    Serial.println("COB button: GPIO19 to GND");
+    deviceStorage.begin();
+    startNetworkRuntime();
+
+    Serial.println("Local controls and water safety remain active in every network mode.");
 
     reportPendingStateChange();
+    logRuntimeStatus();
     lastStatusLogAt = millis();
 }
 
 void loop()
 {
-    waterLevelSensor.update();
-    localControls.update();
-
-    fountainController.update();
-    processLocalControls();
-    fountainController.update();
-
-    hardwareOutputs.update();
+    updateLocalRuntime();
+    updateNetworkRuntime();
     reportPendingStateChange();
 
     const unsigned long now = millis();
@@ -127,7 +180,7 @@ void loop()
     if (now - lastStatusLogAt >= StatusLogIntervalMs)
     {
         lastStatusLogAt = now;
-        logHardwareStatus();
+        logRuntimeStatus();
     }
 
     delay(5);

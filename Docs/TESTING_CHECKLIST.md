@@ -46,52 +46,67 @@ Stored-Wi-Fi IP: 192.168.0.102
 
 ## Stage 4 — Actual-state persistence
 
-Implementation branch:
-
 ```text
-feature/state-persistence
-```
-
-Firmware:
-
-```text
-smart-fountain-32s-state-0.2-persistence
+Branch: feature/state-persistence
+Firmware: smart-fountain-32s-state-0.2-persistence
 ```
 
 ### Build and startup
 
-- [ ] `pio run` succeeds
-- [ ] Firmware uploads
-- [ ] No stored state keeps safe defaults
+- [x] `pio run` succeeds
+- [x] Firmware uploads
+- [x] No stored state keeps safe defaults
 - [ ] Invalid-size record keeps safe defaults
 - [ ] Invalid-checksum record keeps safe defaults
 
+Build evidence:
+
+```text
+RAM: 14.3% (46736 / 327680 bytes)
+Flash: 63.8% (835877 / 1310720 bytes)
+Result: SUCCESS
+```
+
 ### Save behavior
 
-- [ ] Pump change saves after the coalescing delay
-- [ ] COB change saves after the coalescing delay
-- [ ] WS2812B enabled state and RGB color save
-- [ ] Unchanged state skips the flash write
+- [x] Pump change saves after the coalescing delay
+- [x] COB change saves after the coalescing delay
+- [ ] WS2812B enabled state and RGB color save through a production control path
+- [x] Unchanged state skips the flash write
 - [ ] Rapid toggles save only the final state
 - [ ] A failed save remains pending for retry
 
 ### Restore behavior
 
-- [ ] Pump state restores after normal restart
-- [ ] COB state restores after normal restart
-- [ ] WS2812B enabled state and RGB color restore
-- [ ] Restored changes report source `restore`
-- [ ] Live GPIO32 state is read before pump restore
-- [ ] Low water rejects stored pump operation
-- [ ] The resulting safe state replaces the unsafe stored request
+- [x] Pump state restores after normal restart
+- [x] COB state restores after normal restart
+- [ ] WS2812B enabled state and RGB color restore through a production control path
+- [x] Restored changes report source `restore`
+- [x] Live GPIO32 state is read before pump restore
+- [x] Low water rejects stored pump operation
+- [x] COB remains restored during low water
+- [x] The resulting safe pump OFF state replaces the unsafe stored request
+- [x] A later normal-water reboot restores pump OFF rather than restarting it
+
+Recorded serial evidence:
+
+```text
+Stored actual fountain state loaded and verified.
+COB state: ON source=restore
+NeoPixel state: OFF color=0,0,0 source=restore
+Pump state: ON source=restore
+Actual fountain state unchanged. Flash write skipped.
+```
+
+The user confirmed the low-water restore and final normal-water reboot tests passed.
 
 ### Integration safety
 
-- [ ] Local buttons remain responsive during persistence
-- [ ] Water protection remains responsive during persistence
-- [ ] Setup portal remains responsive during persistence
-- [ ] Stored-network retry remains responsive during persistence
-- [ ] GPIO33 Wi-Fi reset preserves `state_blob`
+- [x] Local buttons remain responsive during persistence
+- [x] Water protection remains authoritative during restore/persistence
+- [ ] Setup portal responsiveness during a state write is explicitly re-tested
+- [ ] Stored-network retry responsiveness during a state write is explicitly re-tested
+- [ ] GPIO33 Wi-Fi reset is re-tested while confirming `state_blob` survives
 
 ## Stage 5 — Laravel HTTP
 

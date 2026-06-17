@@ -28,23 +28,18 @@ void FountainController::update()
 
 void FountainController::togglePumpFromLocalButton()
 {
-    if (outputs == nullptr)
+    if (outputs != nullptr)
     {
-        return;
+        requestPumpState(!outputs->isPumpEnabled(), ControlSource::LocalButton);
     }
-
-    const bool requestedState = !outputs->isPumpEnabled();
-    requestPumpState(requestedState, ControlSource::LocalButton);
 }
 
 void FountainController::toggleCobFromLocalButton()
 {
-    if (outputs == nullptr)
+    if (outputs != nullptr)
     {
-        return;
+        requestCobState(!outputs->isCobEnabled(), ControlSource::LocalButton);
     }
-
-    requestCobState(!outputs->isCobEnabled(), ControlSource::LocalButton);
 }
 
 bool FountainController::requestPumpState(bool enabled, ControlSource requestedSource)
@@ -62,7 +57,7 @@ bool FountainController::requestPumpState(bool enabled, ControlSource requestedS
             markStateChanged(ControlSource::Safety);
         }
 
-        Serial.print("Pump ON blocked by low-water safety. source=");
+        Serial.print("Pump request rejected by low-water safety. source=");
         Serial.println(sourceName(requestedSource));
         return false;
     }
@@ -77,7 +72,6 @@ bool FountainController::requestPumpState(bool enabled, ControlSource requestedS
     Serial.print(outputs->isPumpEnabled() ? "ON" : "OFF");
     Serial.print(" source=");
     Serial.println(sourceName(requestedSource));
-
     return true;
 }
 
@@ -96,6 +90,56 @@ void FountainController::requestCobState(bool enabled, ControlSource requestedSo
 
     Serial.print("COB state: ");
     Serial.print(outputs->isCobEnabled() ? "ON" : "OFF");
+    Serial.print(" source=");
+    Serial.println(sourceName(requestedSource));
+}
+
+void FountainController::requestNeoPixelState(
+    bool enabled,
+    uint8_t red,
+    uint8_t green,
+    uint8_t blue,
+    ControlSource requestedSource)
+{
+    if (outputs == nullptr)
+    {
+        return;
+    }
+
+    const bool enabledChanged = outputs->areNeoPixelsEnabled() != enabled;
+    const bool colorChanged =
+        outputs->neoPixelRed() != red ||
+        outputs->neoPixelGreen() != green ||
+        outputs->neoPixelBlue() != blue;
+
+    if (!enabled && enabledChanged)
+    {
+        outputs->setNeoPixelsEnabled(false);
+    }
+
+    if (colorChanged)
+    {
+        outputs->setNeoPixelColor(red, green, blue);
+    }
+
+    if (enabled && enabledChanged)
+    {
+        outputs->setNeoPixelsEnabled(true);
+    }
+
+    if (enabledChanged || colorChanged)
+    {
+        markStateChanged(requestedSource);
+    }
+
+    Serial.print("NeoPixel state: ");
+    Serial.print(outputs->areNeoPixelsEnabled() ? "ON" : "OFF");
+    Serial.print(" color=");
+    Serial.print(outputs->neoPixelRed());
+    Serial.print(",");
+    Serial.print(outputs->neoPixelGreen());
+    Serial.print(",");
+    Serial.print(outputs->neoPixelBlue());
     Serial.print(" source=");
     Serial.println(sourceName(requestedSource));
 }
@@ -129,6 +173,8 @@ const char *FountainController::sourceName(ControlSource value) const
     {
     case ControlSource::Boot:
         return "boot";
+    case ControlSource::Restore:
+        return "restore";
     case ControlSource::LocalButton:
         return "local_button";
     case ControlSource::Laravel:

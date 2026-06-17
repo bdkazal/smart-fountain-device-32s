@@ -141,7 +141,61 @@ The following must remain responsive in every network state:
 - output updates
 - WS2812B runtime
 
-## Test order
+## Validated behavior
+
+The first complete onboarding flow has passed on the ESP32-WROOM-32 hardware using firmware:
+
+```text
+smart-fountain-32s-wifi-0.1-onboarding
+```
+
+Confirmed sequence:
+
+```text
+Fountain-Setup portal active
+submitted router SSID: Andromeda
+credentials tested successfully
+credentials saved and verified in Preferences
+device restarted automatically
+stored SSID found on next boot
+non-blocking station connection started
+Wi-Fi connected
+IP address: 192.168.0.102
+RSSI: approximately -35 to -36 dBm
+```
+
+Relevant serial evidence:
+
+```text
+Testing submitted Wi-Fi SSID: Andromeda
+Wi-Fi credentials saved and verified.
+Submitted Wi-Fi credentials worked and were saved.
+Temporary station IP: 192.168.0.102
+Restarting with saved Wi-Fi credentials...
+
+Loading stored Wi-Fi credentials...
+Stored SSID: Andromeda
+Starting non-blocking Wi-Fi connection to SSID: Andromeda
+Wi-Fi connected.
+IP address: 192.168.0.102
+RSSI dBm: -36
+```
+
+During setup and restart, pump, COB, and NeoPixels remained safely OFF, and the water state continued to be reported.
+
+## Remaining validation
+
+1. Submit a wrong password and confirm the same page allows retry.
+2. Confirm pump/COB buttons during credential testing.
+3. Confirm low-water pump safety during credential testing.
+4. Turn off the router and confirm local controls remain responsive while reconnect retries occur.
+5. Confirm the setup hotspot does not start automatically during an ordinary router outage.
+6. Restore the router and confirm automatic reconnection.
+7. Release GPIO33 before 3 seconds and confirm reset cancellation.
+8. Hold GPIO33 during boot for 3 seconds and confirm provisioning mode returns.
+9. Save new credentials after reprovisioning.
+
+## Full test order
 
 1. Upload firmware with no stored credentials.
 2. Confirm `Fountain-Setup` appears.

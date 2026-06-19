@@ -82,7 +82,7 @@ void LaravelApiClient::update(bool wifiConnected, FountainController &fountainCo
     if (static_cast<long>(now - nextCommandPollAt) >= 0)
     {
         const bool pollOk = pollCommands(fountainController);
-        nextCommandPollAt = now + (pollOk ? CommandPollIntervalMs : CommandPollFailureBackoffMs);
+        nextCommandPollAt = now + (pollOk ? CommandPollIntervalMs : RetryAfterFailureMs);
         return;
     }
 

@@ -82,7 +82,7 @@ void printBootInfo()
     Serial.println(FirmwareInfo::BoardName);
     Serial.print("Firmware: ");
     Serial.println(FirmwareInfo::Version);
-    Serial.println("Milestone: Laravel command polling baseline");
+    Serial.println("Milestone: Laravel command polling + actual state sync baseline");
     Serial.println("========================================");
 }
 
@@ -185,7 +185,8 @@ void reportPendingStateChange()
         return;
     }
 
-    Serial.println("State changed; queued for local persistence and future Laravel state sync.");
+    Serial.println("State changed; queued for local persistence and Laravel actual-state sync.");
+    laravelApiClient.markStateReportPending();
     scheduleFountainStateSave();
 }
 
@@ -230,7 +231,11 @@ void updateLaravelRuntime()
         return;
     }
 
-    laravelApiClient.update(wifiManager.isConnected(), fountainController);
+    laravelApiClient.update(
+        wifiManager.isConnected(),
+        fountainController,
+        hardwareOutputs,
+        waterLevelSensor);
 }
 
 void logRuntimeStatus()
@@ -280,10 +285,16 @@ void logRuntimeStatus()
         Serial.println(WiFi.RSSI());
     }
 
+    Serial.print(" - Laravel cloud mode: ");
+    Serial.println(laravelApiClient.cloudModeName());
     Serial.print(" - Laravel config fetched: ");
     Serial.println(laravelApiClient.hasFetchedConfig() ? "yes" : "no");
     Serial.print(" - Laravel command polling: ");
     Serial.println(laravelApiClient.hasPolledCommands() ? "active" : "not yet");
+    Serial.print(" - Laravel state synced: ");
+    Serial.println(laravelApiClient.hasSyncedState() ? "yes" : "no");
+    Serial.print(" - Laravel state sync pending: ");
+    Serial.println(laravelApiClient.hasPendingStateReport() ? "yes" : "no");
     Serial.print(" - Laravel heartbeat sent: ");
     Serial.println(laravelApiClient.hasSentHeartbeat() ? "yes" : "no");
 
@@ -292,8 +303,14 @@ void logRuntimeStatus()
         Serial.print(" - last applied Laravel command id: ");
         Serial.println(laravelApiClient.lastAppliedCommandId());
     }
+
+    if (laravelApiClient.lastCompletedCommandId() > 0)
+    {
+        Serial.print(" - last completed Laravel command pending state confirmation: ");
+        Serial.println(laravelApiClient.lastCompletedCommandId());
+    }
 }
-}
+} // namespace
 
 void setup()
 {

@@ -37,6 +37,9 @@ public:
     bool hasPolledCommands() const;
     bool hasAppliedCommand() const;
     bool hasPreviewedStateReportPayload() const;
+    bool hasAttemptedInitialStateReport() const;
+    bool hasSyncedInitialStateReport() const;
+    const char *initialStateReportStatusName() const;
     int lastAppliedCommandId() const;
     const LaravelConfigSnapshot &configSnapshot() const;
 
@@ -45,6 +48,7 @@ private:
     String uuid;
     String firmware;
     LaravelConfigSnapshot config;
+    String lastStateReportPayload;
 
     bool configured = false;
     bool configFetched = false;
@@ -54,6 +58,8 @@ private:
     bool commandApplied = false;
     bool offlineLogged = false;
     bool stateReportPayloadPreviewPrinted = false;
+    bool initialStateReportAttempted = false;
+    bool initialStateReportSucceeded = false;
     int lastCommandId = 0;
 
     unsigned long nextConfigFetchAt = 0;
@@ -75,6 +81,8 @@ private:
 
     bool canBuildStateReportPayload() const;
     void previewStateReportPayload(const HardwareOutputs &hardwareOutputs, const WaterLevelSensor &waterLevelSensor);
+    void postInitialStateReport(const HardwareOutputs &hardwareOutputs, const WaterLevelSensor &waterLevelSensor);
+    bool postStateReportPayload(const String &payload, const char *reason);
     String buildStateReportPayload(const HardwareOutputs &hardwareOutputs, const WaterLevelSensor &waterLevelSensor, const char *source);
     String buildReportId();
     String colorToHex(uint8_t red, uint8_t green, uint8_t blue) const;

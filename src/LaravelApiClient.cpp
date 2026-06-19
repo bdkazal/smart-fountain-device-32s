@@ -639,8 +639,12 @@ bool LaravelApiClient::postState(
         {
             Serial.print("accepted_completed_command_id: ");
             Serial.println(acceptedCompletedCommandId);
-            completedCommandId = 0;
         }
+    }
+
+    if (commandIdForReport > 0)
+    {
+        completedCommandId = 0;
     }
 
     stateSynced = true;

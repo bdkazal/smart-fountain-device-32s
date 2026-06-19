@@ -3,8 +3,11 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
+#include <esp_system.h>
 
 #include "FountainController.h"
+#include "HardwareOutputs.h"
+#include "WaterLevelSensor.h"
 
 void LaravelApiClient::begin(
     const char *baseUrl,
@@ -34,7 +37,11 @@ void LaravelApiClient::begin(
     Serial.println("Reminder: ESP32 must use your Mac/server LAN IP, not 127.0.0.1 or localhost.");
 }
 
-void LaravelApiClient::update(bool wifiConnected, FountainController &fountainController)
+void LaravelApiClient::update(
+    bool wifiConnected,
+    FountainController &fountainController,
+    const HardwareOutputs &hardwareOutputs,
+    const WaterLevelSensor &waterLevelSensor)
 {
     if (!configured)
     {
@@ -65,6 +72,7 @@ void LaravelApiClient::update(bool wifiConnected, FountainController &fountainCo
         if (fetchConfig())
         {
             configFetched = true;
+            previewStateReportPayload(hardwareOutputs, waterLevelSensor);
             nextCommandPollAt = now + 50;
             nextHeartbeatAt = now + 100;
             return;
@@ -76,6 +84,12 @@ void LaravelApiClient::update(bool wifiConnected, FountainController &fountainCo
 
     if (config.deviceType != "smart_fountain")
     {
+        return;
+    }
+
+    if (!stateReportPayloadPreviewPrinted)
+    {
+        previewStateReportPayload(hardwareOutputs, waterLevelSensor);
         return;
     }
 
@@ -118,6 +132,11 @@ bool LaravelApiClient::hasPolledCommands() const
 bool LaravelApiClient::hasAppliedCommand() const
 {
     return commandApplied;
+}
+
+bool LaravelApiClient::hasPreviewedStateReportPayload() const
+{
+    return stateReportPayloadPreviewPrinted;
 }
 
 int LaravelApiClient::lastAppliedCommandId() const
@@ -268,6 +287,7 @@ bool LaravelApiClient::sendHeartbeat()
 
         if (serverTimeUtc.length() > 0)
         {
+            config.serverTimeUtc = serverTimeUtc;
             Serial.print("heartbeat.server_time_utc: ");
             Serial.println(serverTimeUtc);
         }
@@ -522,6 +542,124 @@ bool LaravelApiClient::applyStateApplyCommand(JsonObjectConst payload, FountainC
     }
 
     return fullyApplied;
+}
+
+bool LaravelApiClient::canBuildStateReportPayload() const
+{
+    return configFetched &&
+           config.valid &&
+           config.deviceType == "smart_fountain" &&
+           config.serverTimeUtc.length() > 0;
+}
+
+void LaravelApiClient::previewStateReportPayload(const HardwareOutputs &hardwareOutputs, const WaterLevelSensor &waterLevelSensor)
+{
+    if (stateReportPayloadPreviewPrinted)
+    {
+        return;
+    }
+
+    if (!canBuildStateReportPayload())
+    {
+        Serial.println("State report contract ready: no");
+        Serial.println("State payload preview skipped: waiting for smart_fountain config and server_time_utc.");
+        return;
+    }
+
+    const String payload = buildStateReportPayload(hardwareOutputs, waterLevelSensor, "device_state");
+
+    Serial.println("State report contract ready: yes");
+    Serial.println("State payload preview only; /api/device/state is NOT posted in Phase 0.");
+    Serial.print("State payload preview: ");
+    Serial.println(payload);
+
+    stateReportPayloadPreviewPrinted = true;
+}
+
+String LaravelApiClient::buildStateReportPayload(
+    const HardwareOutputs &hardwareOutputs,
+    const WaterLevelSensor &waterLevelSensor,
+    const char *source)
+{
+    const bool waterLow = waterLevelSensor.isWaterLow();
+    const bool pumpLockout = waterLow;
+    const char *operationState = waterLow ? "water_low_lockout" : "running";
+    const char *outputSource = waterLow ? "safety" : (source == nullptr ? "device_state" : source);
+
+    JsonDocument payloadDoc;
+    payloadDoc["device_uuid"] = uuid;
+    payloadDoc["device_type"] = "smart_fountain";
+    payloadDoc["report_id"] = buildReportId();
+    payloadDoc["reported_at_utc"] = config.serverTimeUtc;
+    payloadDoc["firmware_version"] = firmware;
+    payloadDoc["operation_state"] = operationState;
+
+    if (config.configRevision.length() == 64)
+    {
+        payloadDoc["config_revision"] = config.configRevision;
+    }
+
+    JsonObject outputs = payloadDoc["outputs"].to<JsonObject>();
+
+    JsonObject pump = outputs["pump"].to<JsonObject>();
+    pump["enabled"] = hardwareOutputs.isPumpEnabled();
+    pump["source"] = outputSource;
+
+    JsonObject cobLight = outputs["cob_light"].to<JsonObject>();
+    cobLight["enabled"] = hardwareOutputs.isCobEnabled();
+    cobLight["source"] = outputSource;
+
+    JsonObject rgbLight = outputs["rgb_light"].to<JsonObject>();
+    rgbLight["enabled"] = hardwareOutputs.areNeoPixelsEnabled();
+    rgbLight["color"] = colorToHex(
+        hardwareOutputs.neoPixelRed(),
+        hardwareOutputs.neoPixelGreen(),
+        hardwareOutputs.neoPixelBlue());
+    rgbLight["brightness_percent"] = 100;
+    rgbLight["effect"] = "solid";
+    rgbLight["source"] = outputSource;
+
+    JsonObject safety = payloadDoc["safety"].to<JsonObject>();
+    safety["water_low"] = waterLow;
+    safety["pump_lockout"] = pumpLockout;
+
+    JsonObject clock = payloadDoc["clock"].to<JsonObject>();
+    clock["valid"] = true;
+    clock["source"] = "laravel_utc";
+    clock["rtc_available"] = false;
+
+    String payload;
+    serializeJson(payloadDoc, payload);
+    return payload;
+}
+
+String LaravelApiClient::buildReportId()
+{
+    const uint32_t a = esp_random();
+    const uint32_t b = esp_random();
+    const uint32_t c = esp_random();
+    const uint32_t d = esp_random();
+
+    char buffer[37];
+    snprintf(
+        buffer,
+        sizeof(buffer),
+        "%08lx-%04lx-4%03lx-%04lx-%04lx%08lx",
+        static_cast<unsigned long>(a),
+        static_cast<unsigned long>((b >> 16) & 0xFFFF),
+        static_cast<unsigned long>(b & 0x0FFF),
+        static_cast<unsigned long>(0x8000 | ((c >> 16) & 0x3FFF)),
+        static_cast<unsigned long>(c & 0xFFFF),
+        static_cast<unsigned long>(d));
+
+    return String(buffer);
+}
+
+String LaravelApiClient::colorToHex(uint8_t red, uint8_t green, uint8_t blue) const
+{
+    char buffer[8];
+    snprintf(buffer, sizeof(buffer), "#%02X%02X%02X", red, green, blue);
+    return String(buffer);
 }
 
 bool LaravelApiClient::secretsLookReal() const

@@ -1,10 +1,17 @@
 #include <Arduino.h>
 #include <WiFi.h>
 
+#if __has_include("DeviceSecrets.h")
+#include "DeviceSecrets.h"
+#else
+#include "DeviceSecrets.example.h"
+#endif
+
 #include "DeviceStorage.h"
 #include "FirmwareInfo.h"
 #include "FountainController.h"
 #include "HardwareOutputs.h"
+#include "LaravelApiClient.h"
 #include "LocalControls.h"
 #include "SetupPortal.h"
 #include "WaterLevelSensor.h"
@@ -16,6 +23,7 @@ namespace
 DeviceStorage deviceStorage;
 FountainController fountainController;
 HardwareOutputs hardwareOutputs;
+LaravelApiClient laravelApiClient;
 LocalControls localControls;
 SetupPortal setupPortal;
 WaterLevelSensor waterLevelSensor;
@@ -30,6 +38,41 @@ constexpr unsigned long StatusLogIntervalMs = 5000;
 constexpr unsigned long FountainStateSaveDelayMs = 300;
 constexpr unsigned long FountainStateSaveRetryMs = 5000;
 
+bool looksLikePlaceholder(const String &value)
+{
+    return value.length() == 0 ||
+           value.indexOf("YOUR_") >= 0 ||
+           value.indexOf("xxx") >= 0;
+}
+
+StoredWifiCredentials loadRuntimeWifiCredentials()
+{
+    StoredWifiCredentials credentials = deviceStorage.loadWifiCredentials();
+
+    if (credentials.valid)
+    {
+        return credentials;
+    }
+
+    String secretsSsid = WIFI_SSID;
+    String secretsPassword = WIFI_PASSWORD;
+    secretsSsid.trim();
+
+    if (looksLikePlaceholder(secretsSsid))
+    {
+        return credentials;
+    }
+
+    credentials.ssid = secretsSsid;
+    credentials.password = secretsPassword;
+    credentials.valid = true;
+
+    Serial.println("Using development Wi-Fi credentials from include/DeviceSecrets.h.");
+    Serial.println("These credentials are not saved to NVS; setup portal remains the production path.");
+
+    return credentials;
+}
+
 void printBootInfo()
 {
     Serial.println();
@@ -39,7 +82,7 @@ void printBootInfo()
     Serial.println(FirmwareInfo::BoardName);
     Serial.print("Firmware: ");
     Serial.println(FirmwareInfo::Version);
-    Serial.println("Milestone: safe actual-state persistence and Wi-Fi onboarding");
+    Serial.println("Milestone: Laravel API handshake baseline");
     Serial.println("========================================");
 }
 
@@ -149,7 +192,7 @@ void reportPendingStateChange()
 void startNetworkRuntime()
 {
     const bool resetRequested = wifiReset.checkOnBoot(deviceStorage);
-    const StoredWifiCredentials credentials = deviceStorage.loadWifiCredentials();
+    const StoredWifiCredentials credentials = loadRuntimeWifiCredentials();
 
     bool provisioningRequired = resetRequested || deviceStorage.isProvisioningRequired();
 
@@ -178,6 +221,16 @@ void updateNetworkRuntime()
     }
 
     wifiManager.update();
+}
+
+void updateLaravelRuntime()
+{
+    if (setupPortal.isActive())
+    {
+        return;
+    }
+
+    laravelApiClient.update(wifiManager.isConnected());
 }
 
 void logRuntimeStatus()
@@ -226,6 +279,11 @@ void logRuntimeStatus()
         Serial.print(" - RSSI dBm: ");
         Serial.println(WiFi.RSSI());
     }
+
+    Serial.print(" - Laravel config fetched: ");
+    Serial.println(laravelApiClient.hasFetchedConfig() ? "yes" : "no");
+    Serial.print(" - Laravel heartbeat sent: ");
+    Serial.println(laravelApiClient.hasSentHeartbeat() ? "yes" : "no");
 }
 }
 
@@ -243,6 +301,7 @@ void setup()
 
     deviceStorage.begin();
     restoreStoredFountainState();
+    laravelApiClient.begin(API_BASE_URL, DEVICE_UUID, DEVICE_API_KEY, FIRMWARE_VERSION);
     startNetworkRuntime();
 
     Serial.println("Local controls and water safety remain active in every network mode.");
@@ -256,6 +315,7 @@ void loop()
 {
     updateLocalRuntime();
     updateNetworkRuntime();
+    updateLaravelRuntime();
     reportPendingStateChange();
     persistFountainStateIfDue();
 

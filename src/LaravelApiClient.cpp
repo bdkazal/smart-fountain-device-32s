@@ -3,8 +3,11 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
+#include <esp_system.h>
 
 #include "FountainController.h"
+#include "HardwareOutputs.h"
+#include "WaterLevelSensor.h"
 
 void LaravelApiClient::begin(
     const char *baseUrl,
@@ -32,9 +35,14 @@ void LaravelApiClient::begin(
     Serial.print("Laravel API base URL: ");
     Serial.println(api.baseUrl());
     Serial.println("Reminder: ESP32 must use your Mac/server LAN IP, not 127.0.0.1 or localhost.");
+    Serial.println("Laravel runtime timing: command poll=2s, state sync=10s, config refresh=120s, heartbeat=60s diagnostics.");
 }
 
-void LaravelApiClient::update(bool wifiConnected, FountainController &fountainController)
+void LaravelApiClient::update(
+    bool wifiConnected,
+    FountainController &fountainController,
+    const HardwareOutputs &hardwareOutputs,
+    const WaterLevelSensor &waterLevelSensor)
 {
     if (!configured)
     {
@@ -48,6 +56,8 @@ void LaravelApiClient::update(bool wifiConnected, FountainController &fountainCo
             Serial.println("Laravel API paused: Wi-Fi is not connected. Local controls and water safety continue.");
             offlineLogged = true;
         }
+
+        setCloudMode(LaravelCloudMode::Offline);
         return;
     }
 
@@ -62,11 +72,14 @@ void LaravelApiClient::update(bool wifiConnected, FountainController &fountainCo
             return;
         }
 
-        if (fetchConfig())
+        if (fetchConfig(true))
         {
             configFetched = true;
+            nextConfigFetchAt = now + ConfigRefreshIntervalMs;
             nextCommandPollAt = now + 50;
-            nextHeartbeatAt = now + 100;
+            nextStateReportAt = now + 250;
+            nextHeartbeatAt = now + 500;
+            stateReportPending = true;
             return;
         }
 
@@ -86,18 +99,37 @@ void LaravelApiClient::update(bool wifiConnected, FountainController &fountainCo
         return;
     }
 
+    if (shouldPostState(now))
+    {
+        const bool synced = postState(hardwareOutputs, waterLevelSensor, stateReportPending ? "state_change" : "periodic");
+        nextStateReportAt = now + (synced ? StateReportIntervalMs : RetryAfterFailureMs);
+        return;
+    }
+
+    if (static_cast<long>(now - nextConfigFetchAt) >= 0)
+    {
+        fetchConfig(false);
+        nextConfigFetchAt = millis() + ConfigRefreshIntervalMs;
+        return;
+    }
+
     if (!heartbeatSent || static_cast<long>(now - nextHeartbeatAt) >= 0)
     {
         if (sendHeartbeat())
         {
             heartbeatSent = true;
-            lastHeartbeatAt = now;
             nextHeartbeatAt = now + HeartbeatIntervalMs;
             return;
         }
 
         nextHeartbeatAt = now + RetryAfterFailureMs;
     }
+}
+
+void LaravelApiClient::markStateReportPending()
+{
+    stateReportPending = true;
+    nextStateReportAt = millis() + 100;
 }
 
 bool LaravelApiClient::hasFetchedConfig() const
@@ -120,9 +152,38 @@ bool LaravelApiClient::hasAppliedCommand() const
     return commandApplied;
 }
 
+bool LaravelApiClient::hasSyncedState() const
+{
+    return stateSynced;
+}
+
+bool LaravelApiClient::hasPendingStateReport() const
+{
+    return stateReportPending;
+}
+
 int LaravelApiClient::lastAppliedCommandId() const
 {
     return lastCommandId;
+}
+
+int LaravelApiClient::lastCompletedCommandId() const
+{
+    return completedCommandId;
+}
+
+const char *LaravelApiClient::cloudModeName() const
+{
+    switch (cloudMode)
+    {
+    case LaravelCloudMode::Online:
+        return "online";
+    case LaravelCloudMode::Offline:
+        return "offline";
+    case LaravelCloudMode::Unknown:
+    default:
+        return "unknown";
+    }
 }
 
 const LaravelConfigSnapshot &LaravelApiClient::configSnapshot() const
@@ -130,7 +191,7 @@ const LaravelConfigSnapshot &LaravelApiClient::configSnapshot() const
     return config;
 }
 
-bool LaravelApiClient::fetchConfig()
+bool LaravelApiClient::fetchConfig(bool initialFetch)
 {
     HTTPClient http;
     const String endpoint = api.url("/api/device/config?device_uuid=" + queryEncode(uuid));
@@ -140,6 +201,7 @@ bool LaravelApiClient::fetchConfig()
     if (!http.begin(endpoint))
     {
         Serial.println("Laravel config request could not start.");
+        registerApiFailure("config_begin");
         return false;
     }
 
@@ -149,7 +211,7 @@ bool LaravelApiClient::fetchConfig()
     const String body = http.getString();
     http.end();
 
-    Serial.print("Laravel config HTTP status: ");
+    Serial.print(initialFetch ? "Laravel config HTTP status: " : "Laravel config refresh HTTP status: ");
     Serial.println(status);
 
     if (status != 200)
@@ -159,6 +221,7 @@ bool LaravelApiClient::fetchConfig()
             Serial.print("Laravel config response: ");
             Serial.println(body.substring(0, 240));
         }
+        registerApiFailure("config");
         return false;
     }
 
@@ -169,6 +232,7 @@ bool LaravelApiClient::fetchConfig()
     {
         Serial.print("Laravel config JSON parse failed: ");
         Serial.println(error.c_str());
+        registerApiFailure("config_json");
         return false;
     }
 
@@ -185,20 +249,29 @@ bool LaravelApiClient::fetchConfig()
     config.deviceType = configObject["device_type"] | "";
     config.configRevision = variantToString(configObject["config_revision"]);
 
-    Serial.print("server_time_utc: ");
-    Serial.println(config.serverTimeUtc.length() ? config.serverTimeUtc : "missing");
+    if (initialFetch)
+    {
+        Serial.print("server_time_utc: ");
+        Serial.println(config.serverTimeUtc.length() ? config.serverTimeUtc : "missing");
 
-    Serial.print("config.device_type: ");
-    Serial.println(config.deviceType.length() ? config.deviceType : "missing");
+        Serial.print("config.device_type: ");
+        Serial.println(config.deviceType.length() ? config.deviceType : "missing");
 
-    Serial.print("config.config_revision: ");
-    Serial.println(config.configRevision.length() ? config.configRevision : "missing");
+        Serial.print("config.config_revision: ");
+        Serial.println(config.configRevision.length() ? config.configRevision : "missing");
+    }
+    else
+    {
+        Serial.print("config.config_revision: ");
+        Serial.println(config.configRevision.length() ? config.configRevision : "missing");
+    }
 
     if (config.deviceType != "smart_fountain")
     {
         Serial.println("Warning: config.device_type is not smart_fountain. Command polling remains disabled.");
     }
 
+    registerApiSuccess("config");
     return true;
 }
 
@@ -212,21 +285,23 @@ bool LaravelApiClient::sendHeartbeat()
     if (!http.begin(endpoint))
     {
         Serial.println("Laravel heartbeat request could not start.");
+        registerApiFailure("heartbeat_begin");
         return false;
     }
 
     api.addDeviceHeaders(http);
 
-    String payload = "{";
-    payload += "\"device_uuid\":\"";
-    payload += jsonEscape(uuid);
-    payload += "\",\"firmware_version\":\"";
-    payload += jsonEscape(firmware);
-    payload += "\",\"ip_address\":\"";
-    payload += WiFi.localIP().toString();
-    payload += "\",\"wifi_rssi\":";
-    payload += String(WiFi.RSSI());
-    payload += "}";
+    JsonDocument payloadDoc;
+    payloadDoc["device_uuid"] = uuid;
+    payloadDoc["firmware_version"] = firmware;
+    payloadDoc["ip_address"] = WiFi.localIP().toString();
+    payloadDoc["wifi_rssi"] = WiFi.RSSI();
+    payloadDoc["cloud_mode"] = cloudModeName();
+    payloadDoc["state_synced"] = stateSynced;
+    payloadDoc["command_poll_active"] = commandPollSucceeded;
+
+    String payload;
+    serializeJson(payloadDoc, payload);
 
     const int status = http.POST(payload);
     const String body = http.getString();
@@ -242,6 +317,7 @@ bool LaravelApiClient::sendHeartbeat()
             Serial.print("Heartbeat response: ");
             Serial.println(body.substring(0, 240));
         }
+        registerApiFailure("heartbeat");
         return false;
     }
 
@@ -273,6 +349,7 @@ bool LaravelApiClient::sendHeartbeat()
         }
     }
 
+    registerApiSuccess("heartbeat");
     return true;
 }
 
@@ -286,6 +363,7 @@ bool LaravelApiClient::pollCommands(FountainController &fountainController)
     if (!http.begin(endpoint))
     {
         Serial.println("Laravel command poll request could not start.");
+        registerApiFailure("command_poll_begin");
         return false;
     }
 
@@ -308,10 +386,12 @@ bool LaravelApiClient::pollCommands(FountainController &fountainController)
 
         commandPollSucceeded = false;
         commandPollOnlineLogged = false;
+        registerApiFailure("command_poll");
         return false;
     }
 
     commandPollSucceeded = true;
+    registerApiSuccess("command_poll");
 
     if (!commandPollOnlineLogged)
     {
@@ -327,6 +407,7 @@ bool LaravelApiClient::pollCommands(FountainController &fountainController)
     {
         Serial.print("Command poll JSON parse failed: ");
         Serial.println(error.c_str());
+        registerApiFailure("command_poll_json");
         return false;
     }
 
@@ -334,6 +415,12 @@ bool LaravelApiClient::pollCommands(FountainController &fountainController)
 
     if (command.isNull())
     {
+        const unsigned long now = millis();
+        if (lastNoCommandLogAt == 0 || now - lastNoCommandLogAt >= NoCommandLogIntervalMs)
+        {
+            Serial.println("No pending Laravel command.");
+            lastNoCommandLogAt = now;
+        }
         return true;
     }
 
@@ -355,6 +442,7 @@ bool LaravelApiClient::pollCommands(FountainController &fountainController)
     {
         Serial.println("Unsupported command type for current firmware. Marking failed.");
         ackCommand(commandId, "failed", "Unsupported command type for Smart Fountain V1 firmware.");
+        stateReportPending = true;
         return true;
     }
 
@@ -370,10 +458,14 @@ bool LaravelApiClient::pollCommands(FountainController &fountainController)
         fountainController,
         failureMessage);
 
+    stateReportPending = true;
+
     if (applied)
     {
         commandApplied = true;
         lastCommandId = commandId;
+        completedCommandId = commandId;
+        Serial.println("Queueing final actual-state report after Laravel command.");
         return ackCommand(commandId, "executed", "state_apply executed by ESP32.");
     }
 
@@ -395,19 +487,19 @@ bool LaravelApiClient::ackCommand(int commandId, const char *status, const Strin
     if (!http.begin(endpoint))
     {
         Serial.println("Command ACK request could not start.");
+        registerApiFailure("command_ack_begin");
         return false;
     }
 
     api.addDeviceHeaders(http);
 
-    String payload = "{";
-    payload += "\"device_uuid\":\"";
-    payload += jsonEscape(uuid);
-    payload += "\",\"status\":\"";
-    payload += status;
-    payload += "\",\"message\":\"";
-    payload += jsonEscape(message);
-    payload += "\"}";
+    JsonDocument payloadDoc;
+    payloadDoc["device_uuid"] = uuid;
+    payloadDoc["status"] = status;
+    payloadDoc["message"] = message;
+
+    String payload;
+    serializeJson(payloadDoc, payload);
 
     const int httpStatus = http.POST(payload);
     const String body = http.getString();
@@ -427,9 +519,133 @@ bool LaravelApiClient::ackCommand(int commandId, const char *status, const Strin
             Serial.print("Command ACK response: ");
             Serial.println(body.substring(0, 240));
         }
+        registerApiFailure("command_ack");
         return false;
     }
 
+    registerApiSuccess("command_ack");
+    return true;
+}
+
+bool LaravelApiClient::postState(
+    const HardwareOutputs &hardwareOutputs,
+    const WaterLevelSensor &waterLevelSensor,
+    const char *reason,
+    int completedCommandIdForReport)
+{
+    HTTPClient http;
+    const String endpoint = api.url("/api/device/state");
+
+    http.setTimeout(ApiClient::HttpTimeoutMs);
+
+    if (!http.begin(endpoint))
+    {
+        Serial.println("Laravel state sync request could not start.");
+        registerApiFailure("state_begin");
+        return false;
+    }
+
+    api.addDeviceHeaders(http);
+
+    const bool waterLow = waterLevelSensor.isWaterLow();
+    const bool pumpLockout = waterLow;
+    const char *operationState = waterLow ? "water_low_lockout" : "online";
+    const char *source = reason == nullptr ? "device_state" : reason;
+
+    JsonDocument payloadDoc;
+    payloadDoc["device_uuid"] = uuid;
+    payloadDoc["device_type"] = "smart_fountain";
+    payloadDoc["firmware_version"] = firmware;
+    payloadDoc["operation_state"] = operationState;
+
+    if (config.configRevision.length() == 64)
+    {
+        payloadDoc["config_revision"] = config.configRevision;
+    }
+
+    const int commandIdForReport = completedCommandIdForReport > 0 ? completedCommandIdForReport : completedCommandId;
+    if (commandIdForReport > 0)
+    {
+        payloadDoc["last_completed_command_id"] = commandIdForReport;
+    }
+
+    JsonObject outputs = payloadDoc["outputs"].to<JsonObject>();
+
+    JsonObject pump = outputs["pump"].to<JsonObject>();
+    pump["enabled"] = hardwareOutputs.isPumpEnabled();
+    pump["source"] = source;
+
+    JsonObject cobLight = outputs["cob_light"].to<JsonObject>();
+    cobLight["enabled"] = hardwareOutputs.isCobEnabled();
+    cobLight["source"] = source;
+
+    JsonObject rgbLight = outputs["rgb_light"].to<JsonObject>();
+    rgbLight["enabled"] = hardwareOutputs.areNeoPixelsEnabled();
+    rgbLight["color"] = colorToHex(
+        hardwareOutputs.neoPixelRed(),
+        hardwareOutputs.neoPixelGreen(),
+        hardwareOutputs.neoPixelBlue());
+    rgbLight["brightness_percent"] = 100;
+    rgbLight["effect"] = "solid";
+    rgbLight["source"] = source;
+
+    JsonObject safety = payloadDoc["safety"].to<JsonObject>();
+    safety["water_low"] = waterLow;
+    safety["pump_lockout"] = pumpLockout;
+
+    JsonObject clock = payloadDoc["clock"].to<JsonObject>();
+    clock["valid"] = false;
+    clock["source"] = "not_configured";
+    clock["rtc_available"] = false;
+
+    String payload;
+    serializeJson(payloadDoc, payload);
+
+    const int status = http.POST(payload);
+    const String body = http.getString();
+    http.end();
+
+    Serial.print("Laravel state sync HTTP status: ");
+    Serial.print(status);
+    Serial.print(" reason=");
+    Serial.println(source);
+
+    if (status != 200)
+    {
+        if (body.length() > 0)
+        {
+            Serial.print("Laravel state sync response: ");
+            Serial.println(body.substring(0, 240));
+        }
+        registerApiFailure("state_sync");
+        return false;
+    }
+
+    JsonDocument responseDoc;
+    const DeserializationError error = deserializeJson(responseDoc, body);
+
+    if (!error)
+    {
+        const int updatedOutputs = responseDoc["platform_outputs_updated"] | -1;
+        const int acceptedCompletedCommandId = responseDoc["accepted_completed_command_id"] | 0;
+
+        if (updatedOutputs >= 0)
+        {
+            Serial.print("platform_outputs_updated: ");
+            Serial.println(updatedOutputs);
+        }
+
+        if (acceptedCompletedCommandId > 0)
+        {
+            Serial.print("accepted_completed_command_id: ");
+            Serial.println(acceptedCompletedCommandId);
+            completedCommandId = 0;
+        }
+    }
+
+    stateSynced = true;
+    stateReportPending = false;
+    registerApiSuccess("state_sync");
     return true;
 }
 
@@ -522,6 +738,81 @@ bool LaravelApiClient::applyStateApplyCommand(JsonObjectConst payload, FountainC
     }
 
     return fullyApplied;
+}
+
+void LaravelApiClient::registerApiSuccess(const char *context)
+{
+    consecutiveApiFailures = 0;
+    setCloudMode(LaravelCloudMode::Online);
+
+    (void)context;
+}
+
+void LaravelApiClient::registerApiFailure(const char *context)
+{
+    if (consecutiveApiFailures < 255)
+    {
+        consecutiveApiFailures++;
+    }
+
+    Serial.print("Laravel API failure count: ");
+    Serial.print(consecutiveApiFailures);
+    Serial.print(" context=");
+    Serial.println(context == nullptr ? "unknown" : context);
+
+    if (consecutiveApiFailures >= MaxConsecutiveApiFailures)
+    {
+        setCloudMode(LaravelCloudMode::Offline);
+        Serial.println("Laravel API marked offline after repeated failures. Local controls and water safety continue.");
+    }
+}
+
+void LaravelApiClient::setCloudMode(LaravelCloudMode mode)
+{
+    if (cloudMode == mode && cloudModeLogged)
+    {
+        return;
+    }
+
+    cloudMode = mode;
+    cloudModeLogged = true;
+
+    Serial.print("Laravel cloud mode: ");
+    Serial.println(cloudModeName());
+}
+
+bool LaravelApiClient::shouldPostState(unsigned long now) const
+{
+    return stateReportPending || !stateSynced || static_cast<long>(now - nextStateReportAt) >= 0;
+}
+
+String LaravelApiClient::buildReportId()
+{
+    const uint32_t a = esp_random();
+    const uint32_t b = esp_random();
+    const uint32_t c = esp_random();
+    const uint32_t d = esp_random();
+
+    char buffer[37];
+    snprintf(
+        buffer,
+        sizeof(buffer),
+        "%08lx-%04lx-4%03lx-%04lx-%04lx%08lx",
+        static_cast<unsigned long>(a),
+        static_cast<unsigned long>((b >> 16) & 0xFFFF),
+        static_cast<unsigned long>(b & 0x0FFF),
+        static_cast<unsigned long>(0x8000 | ((c >> 16) & 0x3FFF)),
+        static_cast<unsigned long>(c & 0xFFFF),
+        static_cast<unsigned long>(d));
+
+    return String(buffer);
+}
+
+String LaravelApiClient::colorToHex(uint8_t red, uint8_t green, uint8_t blue) const
+{
+    char buffer[8];
+    snprintf(buffer, sizeof(buffer), "#%02X%02X%02X", red, green, blue);
+    return String(buffer);
 }
 
 bool LaravelApiClient::secretsLookReal() const

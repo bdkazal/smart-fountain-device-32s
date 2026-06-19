@@ -34,7 +34,7 @@ unsigned long lastStatusLogAt = 0;
 unsigned long fountainStateSaveNotBefore = 0;
 bool fountainStateSavePending = false;
 
-constexpr unsigned long StatusLogIntervalMs = 5000;
+constexpr unsigned long StatusLogIntervalMs = 15000;
 constexpr unsigned long FountainStateSaveDelayMs = 300;
 constexpr unsigned long FountainStateSaveRetryMs = 5000;
 
@@ -82,7 +82,7 @@ void printBootInfo()
     Serial.println(FirmwareInfo::BoardName);
     Serial.print("Firmware: ");
     Serial.println(FirmwareInfo::Version);
-    Serial.println("Milestone: Laravel command polling baseline");
+    Serial.println("Milestone: Laravel state report contract preview");
     Serial.println("========================================");
 }
 
@@ -230,7 +230,11 @@ void updateLaravelRuntime()
         return;
     }
 
-    laravelApiClient.update(wifiManager.isConnected(), fountainController);
+    laravelApiClient.update(
+        wifiManager.isConnected(),
+        fountainController,
+        hardwareOutputs,
+        waterLevelSensor);
 }
 
 void logRuntimeStatus()
@@ -286,6 +290,8 @@ void logRuntimeStatus()
     Serial.println(laravelApiClient.hasPolledCommands() ? "active" : "not yet");
     Serial.print(" - Laravel heartbeat sent: ");
     Serial.println(laravelApiClient.hasSentHeartbeat() ? "yes" : "no");
+    Serial.print(" - Laravel state payload preview: ");
+    Serial.println(laravelApiClient.hasPreviewedStateReportPayload() ? "ready" : "not yet");
 
     if (laravelApiClient.hasAppliedCommand())
     {
@@ -309,7 +315,7 @@ void setup()
 
     deviceStorage.begin();
     restoreStoredFountainState();
-    laravelApiClient.begin(API_BASE_URL, DEVICE_UUID, DEVICE_API_KEY, FIRMWARE_VERSION);
+    laravelApiClient.begin(API_BASE_URL, DEVICE_UUID, DEVICE_API_KEY, FirmwareInfo::Version);
     startNetworkRuntime();
 
     Serial.println("Local controls and water safety remain active in every network mode.");

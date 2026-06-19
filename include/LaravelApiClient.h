@@ -6,6 +6,8 @@
 #include "ApiClient.h"
 
 class FountainController;
+class HardwareOutputs;
+class WaterLevelSensor;
 
 struct LaravelConfigSnapshot
 {
@@ -24,12 +26,17 @@ public:
         const char *deviceApiKey,
         const char *firmwareVersion);
 
-    void update(bool wifiConnected, FountainController &fountainController);
+    void update(
+        bool wifiConnected,
+        FountainController &fountainController,
+        const HardwareOutputs &hardwareOutputs,
+        const WaterLevelSensor &waterLevelSensor);
 
     bool hasFetchedConfig() const;
     bool hasSentHeartbeat() const;
     bool hasPolledCommands() const;
     bool hasAppliedCommand() const;
+    bool hasPreviewedStateReportPayload() const;
     int lastAppliedCommandId() const;
     const LaravelConfigSnapshot &configSnapshot() const;
 
@@ -46,6 +53,7 @@ private:
     bool commandPollOnlineLogged = false;
     bool commandApplied = false;
     bool offlineLogged = false;
+    bool stateReportPayloadPreviewPrinted = false;
     int lastCommandId = 0;
 
     unsigned long nextConfigFetchAt = 0;
@@ -64,6 +72,12 @@ private:
     bool pollCommands(FountainController &fountainController);
     bool ackCommand(int commandId, const char *status, const String &message);
     bool applyStateApplyCommand(JsonObjectConst payload, FountainController &fountainController, String &failureMessage);
+
+    bool canBuildStateReportPayload() const;
+    void previewStateReportPayload(const HardwareOutputs &hardwareOutputs, const WaterLevelSensor &waterLevelSensor);
+    String buildStateReportPayload(const HardwareOutputs &hardwareOutputs, const WaterLevelSensor &waterLevelSensor, const char *source);
+    String buildReportId();
+    String colorToHex(uint8_t red, uint8_t green, uint8_t blue) const;
 
     bool secretsLookReal() const;
     bool isPlaceholder(const String &value) const;

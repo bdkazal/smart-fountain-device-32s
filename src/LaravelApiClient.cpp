@@ -598,11 +598,6 @@ bool LaravelApiClient::postState(
     safety["water_low"] = waterLow;
     safety["pump_lockout"] = pumpLockout;
 
-    JsonObject clock = payloadDoc["clock"].to<JsonObject>();
-    clock["valid"] = config.serverTimeUtc.length() > 0;
-    clock["source"] = config.serverTimeUtc.length() > 0 ? "server_time" : "not_configured";
-    clock["rtc_available"] = false;
-
     String payload;
     serializeJson(payloadDoc, payload);
 

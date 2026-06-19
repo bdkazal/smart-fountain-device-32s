@@ -82,7 +82,7 @@ void printBootInfo()
     Serial.println(FirmwareInfo::BoardName);
     Serial.print("Firmware: ");
     Serial.println(FirmwareInfo::Version);
-    Serial.println("Milestone: Laravel state report contract preview");
+    Serial.println("Milestone: Laravel one-shot state report");
     Serial.println("========================================");
 }
 
@@ -292,6 +292,8 @@ void logRuntimeStatus()
     Serial.println(laravelApiClient.hasSentHeartbeat() ? "yes" : "no");
     Serial.print(" - Laravel state payload preview: ");
     Serial.println(laravelApiClient.hasPreviewedStateReportPayload() ? "ready" : "not yet");
+    Serial.print(" - Laravel initial state report: ");
+    Serial.println(laravelApiClient.initialStateReportStatusName());
 
     if (laravelApiClient.hasAppliedCommand())
     {

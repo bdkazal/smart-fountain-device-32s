@@ -6,7 +6,7 @@
 class ApiClient
 {
 public:
-    static constexpr uint16_t HttpTimeoutMs = 1200;
+    static constexpr uint16_t HttpTimeoutMs = 5000;
 
     void begin(const char *baseUrl, const char *deviceApiKey);
 

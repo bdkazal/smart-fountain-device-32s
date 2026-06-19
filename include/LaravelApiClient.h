@@ -57,7 +57,7 @@ private:
     static constexpr unsigned long HeartbeatIntervalMs = 60000;
     static constexpr unsigned long CommandPollIntervalMs = 2000;
     static constexpr unsigned long CommandPollFailureBackoffMs = 5000;
-    static constexpr uint16_t CommandPollTimeoutMs = 800;
+    static constexpr uint16_t CommandPollTimeoutMs = ApiClient::HttpTimeoutMs;
 
     bool fetchConfig();
     bool sendHeartbeat();

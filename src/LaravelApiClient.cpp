@@ -101,7 +101,8 @@ void LaravelApiClient::update(
 
     if (shouldPostState(now))
     {
-        const bool synced = postState(hardwareOutputs, waterLevelSensor, stateReportPending ? "state_change" : "periodic");
+        const char *reason = stateReportPending ? "state_change" : "periodic";
+        const bool synced = postState(hardwareOutputs, waterLevelSensor, reason);
         nextStateReportAt = now + (synced ? StateReportIntervalMs : RetryAfterFailureMs);
         return;
     }
@@ -344,6 +345,7 @@ bool LaravelApiClient::sendHeartbeat()
 
         if (serverTimeUtc.length() > 0)
         {
+            config.serverTimeUtc = serverTimeUtc;
             Serial.print("heartbeat.server_time_utc: ");
             Serial.println(serverTimeUtc);
         }
@@ -549,12 +551,15 @@ bool LaravelApiClient::postState(
 
     const bool waterLow = waterLevelSensor.isWaterLow();
     const bool pumpLockout = waterLow;
-    const char *operationState = waterLow ? "water_low_lockout" : "online";
-    const char *source = reason == nullptr ? "device_state" : reason;
+    const char *operationState = waterLow ? "water_low_lockout" : "running";
+    const char *reportReason = reason == nullptr ? "device_state" : reason;
+    const char *outputSource = waterLow ? "water_safety" : "device_state";
 
     JsonDocument payloadDoc;
     payloadDoc["device_uuid"] = uuid;
     payloadDoc["device_type"] = "smart_fountain";
+    payloadDoc["report_id"] = buildReportId();
+    payloadDoc["reported_at_utc"] = config.serverTimeUtc.length() > 0 ? config.serverTimeUtc : "1970-01-01T00:00:00Z";
     payloadDoc["firmware_version"] = firmware;
     payloadDoc["operation_state"] = operationState;
 
@@ -573,11 +578,11 @@ bool LaravelApiClient::postState(
 
     JsonObject pump = outputs["pump"].to<JsonObject>();
     pump["enabled"] = hardwareOutputs.isPumpEnabled();
-    pump["source"] = source;
+    pump["source"] = outputSource;
 
     JsonObject cobLight = outputs["cob_light"].to<JsonObject>();
     cobLight["enabled"] = hardwareOutputs.isCobEnabled();
-    cobLight["source"] = source;
+    cobLight["source"] = outputSource;
 
     JsonObject rgbLight = outputs["rgb_light"].to<JsonObject>();
     rgbLight["enabled"] = hardwareOutputs.areNeoPixelsEnabled();
@@ -587,15 +592,15 @@ bool LaravelApiClient::postState(
         hardwareOutputs.neoPixelBlue());
     rgbLight["brightness_percent"] = 100;
     rgbLight["effect"] = "solid";
-    rgbLight["source"] = source;
+    rgbLight["source"] = outputSource;
 
     JsonObject safety = payloadDoc["safety"].to<JsonObject>();
     safety["water_low"] = waterLow;
     safety["pump_lockout"] = pumpLockout;
 
     JsonObject clock = payloadDoc["clock"].to<JsonObject>();
-    clock["valid"] = false;
-    clock["source"] = "not_configured";
+    clock["valid"] = config.serverTimeUtc.length() > 0;
+    clock["source"] = config.serverTimeUtc.length() > 0 ? "server_time" : "not_configured";
     clock["rtc_available"] = false;
 
     String payload;
@@ -608,7 +613,7 @@ bool LaravelApiClient::postState(
     Serial.print("Laravel state sync HTTP status: ");
     Serial.print(status);
     Serial.print(" reason=");
-    Serial.println(source);
+    Serial.println(reportReason);
 
     if (status != 200)
     {
@@ -626,8 +631,14 @@ bool LaravelApiClient::postState(
 
     if (!error)
     {
+        const String serverTimeUtc = responseDoc["server_time_utc"] | "";
         const int updatedOutputs = responseDoc["platform_outputs_updated"] | -1;
         const int acceptedCompletedCommandId = responseDoc["accepted_completed_command_id"] | 0;
+
+        if (serverTimeUtc.length() > 0)
+        {
+            config.serverTimeUtc = serverTimeUtc;
+        }
 
         if (updatedOutputs >= 0)
         {
@@ -787,7 +798,7 @@ void LaravelApiClient::setCloudMode(LaravelCloudMode mode)
 
 bool LaravelApiClient::shouldPostState(unsigned long now) const
 {
-    return stateReportPending || !stateSynced || static_cast<long>(now - nextStateReportAt) >= 0;
+    return static_cast<long>(now - nextStateReportAt) >= 0;
 }
 
 String LaravelApiClient::buildReportId()

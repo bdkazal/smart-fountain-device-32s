@@ -6,21 +6,25 @@ The firmware is local-first: physical controls, water protection, storage, Wi-Fi
 
 ## Current milestone
 
-**Stage 1 Laravel API handshake — ready for hardware validation**
+**Stage 2 Laravel command polling — ready for hardware validation**
 
 ```text
 Branch:   feature/laravel-api-handshake
-Firmware: smart-fountain-32s-state-0.3-laravel-handshake
+Firmware: smart-fountain-32s-state-0.4-command-polling
 ```
 
-This stage adds only the Laravel API handshake:
+This stage keeps the Laravel API handshake and adds the first interactive command path:
 
 - `GET /api/device/config?device_uuid=<DEVICE_UUID>`
 - `POST /api/device/heartbeat`
+- `GET /api/device/commands?device_uuid=<DEVICE_UUID>`
+- `POST /api/device/commands/{command}/ack`
 - shared `X-DEVICE-KEY` device-auth header
-- serial logging for config status, `server_time_utc`, `config.device_type`, `config.config_revision`, and heartbeat status
+- `state_apply` command execution through `FountainController`
 
-This stage intentionally does **not** poll commands, ACK commands, apply `state_apply`, execute offline timelines, update RTC, run a NeoPixel effect engine, or report water readings.
+Command polling runs about every 2 seconds while Wi-Fi and Laravel are healthy. Laravel already updates `last_seen_at` when the device checks `/api/device/commands`, so this polling loop is the V1 interactive Online signal for the dashboard.
+
+This stage intentionally does **not** add MQTT, offline timelines, RTC sync, a NeoPixel effect engine, or full `/api/device/state` actual-state reporting. Actual-state reporting is the next major stage.
 
 ## Hardware pin map
 
@@ -45,10 +49,12 @@ boot
   pump restore passes through water protection
   Laravel API client initializes without touching outputs
   Wi-Fi setup or stored-network runtime starts
-  after Wi-Fi connects, firmware fetches config then posts heartbeat
+  after Wi-Fi connects, firmware fetches config
+  if config.device_type is smart_fountain, firmware starts command polling
+  heartbeat remains a slower diagnostics/background check
 ```
 
-Pump and COB are ON/OFF only. The persistence record also supports WS2812B enabled status and RGB color, although a production NeoPixel command path is still future work.
+Pump and COB are ON/OFF only. RGB accepts enabled/color/brightness from Laravel. Brightness is applied by scaling the static RGB color. Animated RGB effects are intentionally left for a later NeoPixel effect-engine stage.
 
 Actual-state persistence uses the existing `fountain` Preferences namespace with key:
 
@@ -78,9 +84,9 @@ From the ESP32, never use `127.0.0.1` or `localhost` for Laravel. Use your Mac/s
 
 `WIFI_SSID` and `WIFI_PASSWORD` in `DeviceSecrets.h` are only a development fallback. The production path remains the setup portal and stored credentials.
 
-## Stage 1 validation target
+## Stage 2 validation target
 
-Expected serial result:
+Expected serial result after Wi-Fi and Laravel are reachable:
 
 ```text
 Wi-Fi connected.
@@ -88,14 +94,44 @@ Laravel config HTTP status: 200
 server_time_utc: ...
 config.device_type: smart_fountain
 config.config_revision: ...
+Command poll HTTP status: 200
+Laravel command polling is active; dashboard presence should stay fresh.
 Heartbeat HTTP status: 200
 ```
 
-Also validate failure behavior:
+Expected result when dashboard queues a Smart Fountain output action:
 
-- Stop Laravel or use a wrong API URL.
-- Pump button, COB button, restored state, and low-water pump protection must still work.
-- The firmware should retry Laravel later without blocking the local fountain runtime permanently.
+```text
+Pending Laravel command: id=... type=state_apply
+Command ACK HTTP status: id=... status=acknowledged http=200
+Pump state: ... source=laravel
+COB state: ... source=laravel
+NeoPixel state: ... source=laravel
+state_apply command applied through FountainController.
+Command ACK HTTP status: id=... status=executed http=200
+```
+
+Also validate that local Pump/COB buttons, restored state, and water protection continue to work even when Laravel is unreachable.
+
+## Current API behavior
+
+```text
+Command poll:
+  GET /api/device/commands?device_uuid=<uuid>
+
+Supported command type:
+  state_apply
+
+Unsupported command types:
+  marked failed, not applied
+
+ACK flow:
+  pending -> acknowledged -> executed
+  pending -> failed when unsupported or local protection prevents full application
+
+Heartbeat:
+  remains enabled for diagnostics: firmware version, IP, RSSI, last_seen_at
+```
 
 ## Previously validated persistence result
 

@@ -34,7 +34,7 @@ unsigned long lastStatusLogAt = 0;
 unsigned long fountainStateSaveNotBefore = 0;
 bool fountainStateSavePending = false;
 
-constexpr unsigned long StatusLogIntervalMs = 5000;
+constexpr unsigned long StatusLogIntervalMs = 15000;
 constexpr unsigned long FountainStateSaveDelayMs = 300;
 constexpr unsigned long FountainStateSaveRetryMs = 5000;
 

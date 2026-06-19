@@ -5,6 +5,8 @@
 
 #include "ApiClient.h"
 
+class FountainController;
+
 struct LaravelConfigSnapshot
 {
     bool valid = false;
@@ -22,20 +24,16 @@ public:
         const char *deviceApiKey,
         const char *firmwareVersion);
 
-    void update(bool wifiConnected);
+    void update(bool wifiConnected, FountainController &fountainController);
 
     bool hasFetchedConfig() const;
     bool hasSentHeartbeat() const;
+    bool hasPolledCommands() const;
+    bool hasAppliedCommand() const;
+    int lastAppliedCommandId() const;
     const LaravelConfigSnapshot &configSnapshot() const;
 
 private:
-    enum class RuntimeStep : uint8_t
-    {
-        FetchConfig,
-        SendHeartbeat,
-        Waiting
-    };
-
     ApiClient api;
     String uuid;
     String firmware;
@@ -44,20 +42,37 @@ private:
     bool configured = false;
     bool configFetched = false;
     bool heartbeatSent = false;
+    bool commandPollSucceeded = false;
+    bool commandPollOnlineLogged = false;
+    bool commandApplied = false;
     bool offlineLogged = false;
-    RuntimeStep step = RuntimeStep::FetchConfig;
-    unsigned long nextActionAt = 0;
+    int lastCommandId = 0;
+
+    unsigned long nextConfigFetchAt = 0;
+    unsigned long nextCommandPollAt = 0;
+    unsigned long nextHeartbeatAt = 0;
     unsigned long lastHeartbeatAt = 0;
 
     static constexpr unsigned long RetryAfterFailureMs = 30000;
     static constexpr unsigned long HeartbeatIntervalMs = 60000;
+    static constexpr unsigned long CommandPollIntervalMs = 2000;
+    static constexpr unsigned long CommandPollFailureBackoffMs = 5000;
+    static constexpr uint16_t CommandPollTimeoutMs = 800;
 
     bool fetchConfig();
     bool sendHeartbeat();
+    bool pollCommands(FountainController &fountainController);
+    bool ackCommand(int commandId, const char *status, const String &message);
+    bool applyStateApplyCommand(JsonObjectConst payload, FountainController &fountainController, String &failureMessage);
+
     bool secretsLookReal() const;
     bool isPlaceholder(const String &value) const;
-    void scheduleRetry();
-    void scheduleSoon();
+    bool parseHexColor(const String &color, uint8_t &red, uint8_t &green, uint8_t &blue) const;
+    int hexNibble(char value) const;
+    uint8_t applyBrightness(uint8_t value, int brightnessPercent) const;
+    int clampPercent(int value) const;
+    void appendFailure(String &message, const String &detail) const;
+    void scheduleConfigRetry();
     String queryEncode(const String &value) const;
     String jsonEscape(const String &value) const;
     String variantToString(JsonVariantConst value) const;

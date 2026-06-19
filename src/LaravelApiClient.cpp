@@ -73,6 +73,7 @@ void LaravelApiClient::update(
         {
             configFetched = true;
             previewStateReportPayload(hardwareOutputs, waterLevelSensor);
+            postInitialStateReport(hardwareOutputs, waterLevelSensor);
             nextCommandPollAt = now + 50;
             nextHeartbeatAt = now + 100;
             return;
@@ -90,6 +91,12 @@ void LaravelApiClient::update(
     if (!stateReportPayloadPreviewPrinted)
     {
         previewStateReportPayload(hardwareOutputs, waterLevelSensor);
+        return;
+    }
+
+    if (!initialStateReportAttempted)
+    {
+        postInitialStateReport(hardwareOutputs, waterLevelSensor);
         return;
     }
 
@@ -137,6 +144,31 @@ bool LaravelApiClient::hasAppliedCommand() const
 bool LaravelApiClient::hasPreviewedStateReportPayload() const
 {
     return stateReportPayloadPreviewPrinted;
+}
+
+bool LaravelApiClient::hasAttemptedInitialStateReport() const
+{
+    return initialStateReportAttempted;
+}
+
+bool LaravelApiClient::hasSyncedInitialStateReport() const
+{
+    return initialStateReportSucceeded;
+}
+
+const char *LaravelApiClient::initialStateReportStatusName() const
+{
+    if (initialStateReportSucceeded)
+    {
+        return "synced";
+    }
+
+    if (initialStateReportAttempted)
+    {
+        return "failed";
+    }
+
+    return "not yet";
 }
 
 int LaravelApiClient::lastAppliedCommandId() const
@@ -566,14 +598,101 @@ void LaravelApiClient::previewStateReportPayload(const HardwareOutputs &hardware
         return;
     }
 
-    const String payload = buildStateReportPayload(hardwareOutputs, waterLevelSensor, "device_state");
+    lastStateReportPayload = buildStateReportPayload(hardwareOutputs, waterLevelSensor, "device_state");
 
     Serial.println("State report contract ready: yes");
-    Serial.println("State payload preview only; /api/device/state is NOT posted in Phase 0.");
+    Serial.println("State payload preview built. Phase 1 will POST this payload once.");
     Serial.print("State payload preview: ");
-    Serial.println(payload);
+    Serial.println(lastStateReportPayload);
 
     stateReportPayloadPreviewPrinted = true;
+}
+
+void LaravelApiClient::postInitialStateReport(const HardwareOutputs &hardwareOutputs, const WaterLevelSensor &waterLevelSensor)
+{
+    if (initialStateReportAttempted)
+    {
+        return;
+    }
+
+    if (!stateReportPayloadPreviewPrinted)
+    {
+        previewStateReportPayload(hardwareOutputs, waterLevelSensor);
+    }
+
+    if (lastStateReportPayload.length() == 0)
+    {
+        Serial.println("Initial Laravel state report skipped: payload is not ready.");
+        return;
+    }
+
+    initialStateReportAttempted = true;
+    initialStateReportSucceeded = postStateReportPayload(lastStateReportPayload, "boot_config");
+}
+
+bool LaravelApiClient::postStateReportPayload(const String &payload, const char *reason)
+{
+    HTTPClient http;
+    const String endpoint = api.url("/api/device/state");
+
+    http.setTimeout(ApiClient::HttpTimeoutMs);
+
+    if (!http.begin(endpoint))
+    {
+        Serial.println("Laravel state sync request could not start.");
+        return false;
+    }
+
+    api.addDeviceHeaders(http);
+
+    const int status = http.POST(payload);
+    const String body = http.getString();
+    http.end();
+
+    Serial.print("Laravel state sync HTTP status: ");
+    Serial.print(status);
+    Serial.print(" reason=");
+    Serial.println(reason == nullptr ? "unknown" : reason);
+
+    if (body.length() > 0)
+    {
+        if (status == 200)
+        {
+            JsonDocument responseDoc;
+            const DeserializationError error = deserializeJson(responseDoc, body);
+
+            if (!error)
+            {
+                const String serverTimeUtc = responseDoc["server_time_utc"] | "";
+                const int updatedOutputs = responseDoc["platform_outputs_updated"] | -1;
+                const int acceptedCompletedCommandId = responseDoc["accepted_completed_command_id"] | 0;
+
+                if (serverTimeUtc.length() > 0)
+                {
+                    config.serverTimeUtc = serverTimeUtc;
+                }
+
+                if (updatedOutputs >= 0)
+                {
+                    Serial.print("platform_outputs_updated: ");
+                    Serial.println(updatedOutputs);
+                }
+
+                if (acceptedCompletedCommandId > 0)
+                {
+                    Serial.print("accepted_completed_command_id: ");
+                    Serial.println(acceptedCompletedCommandId);
+                }
+            }
+        }
+        else
+        {
+            Serial.print("Laravel state sync response: ");
+            Serial.println(body.substring(0, 300));
+        }
+    }
+
+    return status == 200;
 }
 
 String LaravelApiClient::buildStateReportPayload(

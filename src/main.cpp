@@ -82,7 +82,7 @@ void printBootInfo()
     Serial.println(FirmwareInfo::BoardName);
     Serial.print("Firmware: ");
     Serial.println(FirmwareInfo::Version);
-    Serial.println("Milestone: Laravel API handshake baseline");
+    Serial.println("Milestone: Laravel command polling baseline");
     Serial.println("========================================");
 }
 
@@ -230,7 +230,7 @@ void updateLaravelRuntime()
         return;
     }
 
-    laravelApiClient.update(wifiManager.isConnected());
+    laravelApiClient.update(wifiManager.isConnected(), fountainController);
 }
 
 void logRuntimeStatus()
@@ -282,8 +282,16 @@ void logRuntimeStatus()
 
     Serial.print(" - Laravel config fetched: ");
     Serial.println(laravelApiClient.hasFetchedConfig() ? "yes" : "no");
+    Serial.print(" - Laravel command polling: ");
+    Serial.println(laravelApiClient.hasPolledCommands() ? "active" : "not yet");
     Serial.print(" - Laravel heartbeat sent: ");
     Serial.println(laravelApiClient.hasSentHeartbeat() ? "yes" : "no");
+
+    if (laravelApiClient.hasAppliedCommand())
+    {
+        Serial.print(" - last applied Laravel command id: ");
+        Serial.println(laravelApiClient.lastAppliedCommandId());
+    }
 }
 }
 

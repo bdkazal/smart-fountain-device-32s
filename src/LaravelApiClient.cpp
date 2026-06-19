@@ -4,6 +4,8 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 
+#include "FountainController.h"
+
 void LaravelApiClient::begin(
     const char *baseUrl,
     const char *deviceUuid,
@@ -19,11 +21,11 @@ void LaravelApiClient::begin(
     configured = api.isConfigured() && secretsLookReal();
 
     Serial.println();
-    Serial.println("Laravel API handshake client initialized.");
+    Serial.println("Laravel API client initialized.");
 
     if (!configured)
     {
-        Serial.println("Laravel API handshake disabled: copy include/DeviceSecrets.example.h to include/DeviceSecrets.h and fill real values.");
+        Serial.println("Laravel API disabled: copy include/DeviceSecrets.example.h to include/DeviceSecrets.h and fill real values.");
         return;
     }
 
@@ -32,7 +34,7 @@ void LaravelApiClient::begin(
     Serial.println("Reminder: ESP32 must use your Mac/server LAN IP, not 127.0.0.1 or localhost.");
 }
 
-void LaravelApiClient::update(bool wifiConnected)
+void LaravelApiClient::update(bool wifiConnected, FountainController &fountainController)
 {
     if (!configured)
     {
@@ -53,39 +55,48 @@ void LaravelApiClient::update(bool wifiConnected)
 
     const unsigned long now = millis();
 
-    if (static_cast<long>(now - nextActionAt) < 0)
+    if (!configFetched)
     {
-        return;
-    }
-
-    if (!configFetched || step == RuntimeStep::FetchConfig)
-    {
-        if (fetchConfig())
+        if (static_cast<long>(now - nextConfigFetchAt) < 0)
         {
-            configFetched = true;
-            step = RuntimeStep::SendHeartbeat;
-            scheduleSoon();
             return;
         }
 
-        step = RuntimeStep::FetchConfig;
-        scheduleRetry();
+        if (fetchConfig())
+        {
+            configFetched = true;
+            nextCommandPollAt = now + 50;
+            nextHeartbeatAt = now + 100;
+            return;
+        }
+
+        scheduleConfigRetry();
         return;
     }
 
-    if (!heartbeatSent || step == RuntimeStep::SendHeartbeat || now - lastHeartbeatAt >= HeartbeatIntervalMs)
+    if (config.deviceType != "smart_fountain")
+    {
+        return;
+    }
+
+    if (static_cast<long>(now - nextCommandPollAt) >= 0)
+    {
+        const bool pollOk = pollCommands(fountainController);
+        nextCommandPollAt = now + (pollOk ? CommandPollIntervalMs : CommandPollFailureBackoffMs);
+        return;
+    }
+
+    if (!heartbeatSent || static_cast<long>(now - nextHeartbeatAt) >= 0)
     {
         if (sendHeartbeat())
         {
             heartbeatSent = true;
             lastHeartbeatAt = now;
-            step = RuntimeStep::Waiting;
-            nextActionAt = now + HeartbeatIntervalMs;
+            nextHeartbeatAt = now + HeartbeatIntervalMs;
             return;
         }
 
-        step = RuntimeStep::SendHeartbeat;
-        scheduleRetry();
+        nextHeartbeatAt = now + RetryAfterFailureMs;
     }
 }
 
@@ -97,6 +108,21 @@ bool LaravelApiClient::hasFetchedConfig() const
 bool LaravelApiClient::hasSentHeartbeat() const
 {
     return heartbeatSent;
+}
+
+bool LaravelApiClient::hasPolledCommands() const
+{
+    return commandPollSucceeded;
+}
+
+bool LaravelApiClient::hasAppliedCommand() const
+{
+    return commandApplied;
+}
+
+int LaravelApiClient::lastAppliedCommandId() const
+{
+    return lastCommandId;
 }
 
 const LaravelConfigSnapshot &LaravelApiClient::configSnapshot() const
@@ -170,7 +196,7 @@ bool LaravelApiClient::fetchConfig()
 
     if (config.deviceType != "smart_fountain")
     {
-        Serial.println("Warning: config.device_type is not smart_fountain. Commands remain disabled in Stage 1.");
+        Serial.println("Warning: config.device_type is not smart_fountain. Command polling remains disabled.");
     }
 
     return true;
@@ -225,6 +251,21 @@ bool LaravelApiClient::sendHeartbeat()
     if (!error)
     {
         const String serverTimeUtc = doc["server_time_utc"] | "";
+        const String heartbeatStatus = doc["status"] | "";
+        const String lastSeenAt = doc["last_seen_at"] | "";
+
+        if (heartbeatStatus.length() > 0)
+        {
+            Serial.print("heartbeat.status: ");
+            Serial.println(heartbeatStatus);
+        }
+
+        if (lastSeenAt.length() > 0)
+        {
+            Serial.print("heartbeat.last_seen_at: ");
+            Serial.println(lastSeenAt);
+        }
+
         if (serverTimeUtc.length() > 0)
         {
             Serial.print("heartbeat.server_time_utc: ");
@@ -233,6 +274,254 @@ bool LaravelApiClient::sendHeartbeat()
     }
 
     return true;
+}
+
+bool LaravelApiClient::pollCommands(FountainController &fountainController)
+{
+    HTTPClient http;
+    const String endpoint = api.url("/api/device/commands?device_uuid=" + queryEncode(uuid));
+
+    http.setTimeout(CommandPollTimeoutMs);
+
+    if (!http.begin(endpoint))
+    {
+        Serial.println("Laravel command poll request could not start.");
+        return false;
+    }
+
+    api.addDeviceHeaders(http);
+
+    const int status = http.GET();
+    const String body = http.getString();
+    http.end();
+
+    if (status != 200)
+    {
+        Serial.print("Command poll HTTP status: ");
+        Serial.println(status);
+
+        if (body.length() > 0)
+        {
+            Serial.print("Command poll response: ");
+            Serial.println(body.substring(0, 240));
+        }
+
+        commandPollSucceeded = false;
+        commandPollOnlineLogged = false;
+        return false;
+    }
+
+    commandPollSucceeded = true;
+
+    if (!commandPollOnlineLogged)
+    {
+        Serial.println("Command poll HTTP status: 200");
+        Serial.println("Laravel command polling is active; dashboard presence should stay fresh.");
+        commandPollOnlineLogged = true;
+    }
+
+    JsonDocument doc;
+    const DeserializationError error = deserializeJson(doc, body);
+
+    if (error)
+    {
+        Serial.print("Command poll JSON parse failed: ");
+        Serial.println(error.c_str());
+        return false;
+    }
+
+    JsonObjectConst command = doc["command"].as<JsonObjectConst>();
+
+    if (command.isNull())
+    {
+        return true;
+    }
+
+    const int commandId = command["id"] | 0;
+    const String commandType = command["command_type"] | "";
+
+    Serial.print("Pending Laravel command: id=");
+    Serial.print(commandId);
+    Serial.print(" type=");
+    Serial.println(commandType.length() ? commandType : "missing");
+
+    if (commandId <= 0)
+    {
+        Serial.println("Pending command ignored: missing command id.");
+        return true;
+    }
+
+    if (commandType != "state_apply")
+    {
+        Serial.println("Unsupported command type for current firmware. Marking failed.");
+        ackCommand(commandId, "failed", "Unsupported command type for Smart Fountain V1 firmware.");
+        return true;
+    }
+
+    if (!ackCommand(commandId, "acknowledged", "Command received by ESP32."))
+    {
+        Serial.println("Command was not applied because acknowledge failed.");
+        return false;
+    }
+
+    String failureMessage;
+    const bool applied = applyStateApplyCommand(
+        command["payload"].as<JsonObjectConst>(),
+        fountainController,
+        failureMessage);
+
+    if (applied)
+    {
+        commandApplied = true;
+        lastCommandId = commandId;
+        return ackCommand(commandId, "executed", "state_apply executed by ESP32.");
+    }
+
+    if (failureMessage.length() == 0)
+    {
+        failureMessage = "state_apply could not be fully applied by ESP32.";
+    }
+
+    return ackCommand(commandId, "failed", failureMessage);
+}
+
+bool LaravelApiClient::ackCommand(int commandId, const char *status, const String &message)
+{
+    HTTPClient http;
+    const String endpoint = api.url("/api/device/commands/" + String(commandId) + "/ack");
+
+    http.setTimeout(ApiClient::HttpTimeoutMs);
+
+    if (!http.begin(endpoint))
+    {
+        Serial.println("Command ACK request could not start.");
+        return false;
+    }
+
+    api.addDeviceHeaders(http);
+
+    String payload = "{";
+    payload += "\"device_uuid\":\"";
+    payload += jsonEscape(uuid);
+    payload += "\",\"status\":\"";
+    payload += status;
+    payload += "\",\"message\":\"";
+    payload += jsonEscape(message);
+    payload += "\"}";
+
+    const int httpStatus = http.POST(payload);
+    const String body = http.getString();
+    http.end();
+
+    Serial.print("Command ACK HTTP status: id=");
+    Serial.print(commandId);
+    Serial.print(" status=");
+    Serial.print(status);
+    Serial.print(" http=");
+    Serial.println(httpStatus);
+
+    if (httpStatus != 200)
+    {
+        if (body.length() > 0)
+        {
+            Serial.print("Command ACK response: ");
+            Serial.println(body.substring(0, 240));
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool LaravelApiClient::applyStateApplyCommand(JsonObjectConst payload, FountainController &fountainController, String &failureMessage)
+{
+    if (payload.isNull())
+    {
+        failureMessage = "state_apply payload missing.";
+        Serial.println(failureMessage);
+        return false;
+    }
+
+    JsonObjectConst outputs = payload["outputs"].as<JsonObjectConst>();
+
+    if (outputs.isNull())
+    {
+        failureMessage = "state_apply outputs missing.";
+        Serial.println(failureMessage);
+        return false;
+    }
+
+    bool touchedOutput = false;
+    bool fullyApplied = true;
+
+    JsonObjectConst pump = outputs["pump"].as<JsonObjectConst>();
+    if (!pump.isNull())
+    {
+        touchedOutput = true;
+        const bool requested = pump["enabled"] | false;
+        const bool accepted = fountainController.requestPumpState(requested, ControlSource::Laravel);
+
+        if (!accepted && requested)
+        {
+            fullyApplied = false;
+            appendFailure(failureMessage, "Pump ON rejected by local water safety.");
+        }
+    }
+
+    JsonObjectConst cobLight = outputs["cob_light"].as<JsonObjectConst>();
+    if (!cobLight.isNull())
+    {
+        touchedOutput = true;
+        const bool requested = cobLight["enabled"] | false;
+        fountainController.requestCobState(requested, ControlSource::Laravel);
+    }
+
+    JsonObjectConst rgbLight = outputs["rgb_light"].as<JsonObjectConst>();
+    if (!rgbLight.isNull())
+    {
+        touchedOutput = true;
+        const bool requested = rgbLight["enabled"] | false;
+        const String color = rgbLight["color"] | "#000000";
+        const int brightnessPercent = clampPercent(rgbLight["brightness_percent"] | 100);
+
+        uint8_t red = 0;
+        uint8_t green = 0;
+        uint8_t blue = 0;
+
+        if (!parseHexColor(color, red, green, blue))
+        {
+            fullyApplied = false;
+            appendFailure(failureMessage, "RGB color was invalid.");
+        }
+        else
+        {
+            fountainController.requestNeoPixelState(
+                requested,
+                applyBrightness(red, brightnessPercent),
+                applyBrightness(green, brightnessPercent),
+                applyBrightness(blue, brightnessPercent),
+                ControlSource::Laravel);
+        }
+    }
+
+    if (!touchedOutput)
+    {
+        failureMessage = "state_apply did not contain supported outputs.";
+        Serial.println(failureMessage);
+        return false;
+    }
+
+    if (fullyApplied)
+    {
+        Serial.println("state_apply command applied through FountainController.");
+    }
+    else
+    {
+        Serial.print("state_apply command was safety-adjusted/failed: ");
+        Serial.println(failureMessage);
+    }
+
+    return fullyApplied;
 }
 
 bool LaravelApiClient::secretsLookReal() const
@@ -249,15 +538,85 @@ bool LaravelApiClient::isPlaceholder(const String &value) const
            value.indexOf("localhost") >= 0;
 }
 
-void LaravelApiClient::scheduleRetry()
+bool LaravelApiClient::parseHexColor(const String &color, uint8_t &red, uint8_t &green, uint8_t &blue) const
 {
-    nextActionAt = millis() + RetryAfterFailureMs;
-    Serial.println("Laravel API retry scheduled. Local controls and water safety continue.");
+    if (color.length() != 7 || color.charAt(0) != '#')
+    {
+        return false;
+    }
+
+    const int r1 = hexNibble(color.charAt(1));
+    const int r2 = hexNibble(color.charAt(2));
+    const int g1 = hexNibble(color.charAt(3));
+    const int g2 = hexNibble(color.charAt(4));
+    const int b1 = hexNibble(color.charAt(5));
+    const int b2 = hexNibble(color.charAt(6));
+
+    if (r1 < 0 || r2 < 0 || g1 < 0 || g2 < 0 || b1 < 0 || b2 < 0)
+    {
+        return false;
+    }
+
+    red = static_cast<uint8_t>((r1 << 4) | r2);
+    green = static_cast<uint8_t>((g1 << 4) | g2);
+    blue = static_cast<uint8_t>((b1 << 4) | b2);
+    return true;
 }
 
-void LaravelApiClient::scheduleSoon()
+int LaravelApiClient::hexNibble(char value) const
 {
-    nextActionAt = millis() + 50;
+    if (value >= '0' && value <= '9')
+    {
+        return value - '0';
+    }
+
+    if (value >= 'a' && value <= 'f')
+    {
+        return value - 'a' + 10;
+    }
+
+    if (value >= 'A' && value <= 'F')
+    {
+        return value - 'A' + 10;
+    }
+
+    return -1;
+}
+
+uint8_t LaravelApiClient::applyBrightness(uint8_t value, int brightnessPercent) const
+{
+    return static_cast<uint8_t>((static_cast<uint16_t>(value) * clampPercent(brightnessPercent)) / 100);
+}
+
+int LaravelApiClient::clampPercent(int value) const
+{
+    if (value < 0)
+    {
+        return 0;
+    }
+
+    if (value > 100)
+    {
+        return 100;
+    }
+
+    return value;
+}
+
+void LaravelApiClient::appendFailure(String &message, const String &detail) const
+{
+    if (message.length() > 0)
+    {
+        message += " ";
+    }
+
+    message += detail;
+}
+
+void LaravelApiClient::scheduleConfigRetry()
+{
+    nextConfigFetchAt = millis() + RetryAfterFailureMs;
+    Serial.println("Laravel config retry scheduled. Local controls and water safety continue.");
 }
 
 String LaravelApiClient::queryEncode(const String &value) const

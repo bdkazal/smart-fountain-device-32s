@@ -15,4 +15,4 @@
 #define DEVICE_UUID "YOUR_SMART_FOUNTAIN_DEVICE_UUID"
 #define DEVICE_API_KEY "YOUR_SMART_FOUNTAIN_DEVICE_API_KEY"
 
-#define FIRMWARE_VERSION "smart-fountain-32s-state-0.3-laravel-handshake"
+#define FIRMWARE_VERSION "smart-fountain-32s-state-0.4-command-polling"

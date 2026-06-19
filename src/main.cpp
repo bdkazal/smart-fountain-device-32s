@@ -309,7 +309,7 @@ void setup()
 
     deviceStorage.begin();
     restoreStoredFountainState();
-    laravelApiClient.begin(API_BASE_URL, DEVICE_UUID, DEVICE_API_KEY, FIRMWARE_VERSION);
+    laravelApiClient.begin(API_BASE_URL, DEVICE_UUID, DEVICE_API_KEY, FirmwareInfo::Version);
     startNetworkRuntime();
 
     Serial.println("Local controls and water safety remain active in every network mode.");
